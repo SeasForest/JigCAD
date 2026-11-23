@@ -14,25 +14,56 @@ FORMATS = ("step", "stl", "3mf", "gltf", "brep")
 
 # --------------------------------------------------------------------------- export
 
-def export(body, name: str, out_dir: Path, formats=("step", "stl")) -> list[str]:
-    from build123d import Mesher, export_gltf, export_step, export_stl
+def _colored(regions, palette, name):
+    """One labelled, coloured shape per material (for STEP/3MF/GLB)."""
+    from build123d import Color, Compound
+    kids = []
+    for m, shp in regions.items():
+        shp = shp.clean() if hasattr(shp, "clean") else shp
+        shp.label = f"{name}.{m}"
+        shp.color = Color(*palette.color(m))
+        kids.append(shp)
+    asm = Compound(children=kids)
+    asm.label = name
+    return asm, kids
+
+
+def export(body, name: str, out_dir: Path, formats=("step", "stl"), regions=None, palette=None,
+           default_material=None) -> list[str]:
+    """Single-material: one body. Multi-material (regions): coloured STEP assembly, 3MF with one
+    coloured object per material, coloured GLB, plus one STL per material for slicers."""
+    from build123d import Color, Mesher, export_gltf, export_step, export_stl
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     body = body.clean() if hasattr(body, "clean") else body
     body.label = name
+    multi = bool(regions) and palette is not None
+    if multi:
+        asm, kids = _colored(regions, palette, name)
+    elif palette is not None and default_material:
+        body.color = Color(*palette.color(default_material))
     for fmt in formats:
         p = out_dir / f"{name}.{fmt}"
         if fmt == "step":
-            export_step(body, p, timestamp="2000-01-01T00:00:00")  # deterministic file
+            export_step(asm if multi else body, p, timestamp="2000-01-01T00:00:00")  # deterministic file
         elif fmt == "stl":
             export_stl(body, p, tolerance=0.01, angular_tolerance=0.1)
+            if multi:  # one STL per material: load together in a slicer, assign one filament each
+                for m, shp in regions.items():
+                    pm = out_dir / f"{name}.{m}.stl"
+                    export_stl(shp, pm, tolerance=0.01, angular_tolerance=0.1)
+                    written.append(str(pm))
         elif fmt == "3mf":
             m = Mesher()
-            m.add_shape(body, linear_deflection=0.01, angular_deflection=0.1)
+            if multi:
+                for k in kids:
+                    m.add_shape(k, linear_deflection=0.01, angular_deflection=0.1)
+            else:
+                m.add_shape(body, linear_deflection=0.01, angular_deflection=0.1)
             m.write(str(p))
         elif fmt == "gltf":
             p = out_dir / f"{name}.glb"
-            export_gltf(body, p, binary=True, linear_deflection=0.01)
+            export_gltf(asm if multi else body, p, binary=True, linear_deflection=0.01)
         elif fmt == "brep":
             body.export_brep(str(p))
         else:
@@ -95,6 +126,9 @@ def format_text(rep: dict) -> str:
         if rep.get("min_wall") is not None:
             extra += f"  min_wall {rep['min_wall']:g}"
         L.append(extra)
+        if p.get("materials"):
+            L.append("materials " + "  ".join(f"{m} {d['pct']:g}%" for m, d in
+                                               sorted(p["materials"].items(), key=lambda kv: -kv[1]["pct"])))
     for e in rep["errors"] + rep["warnings"]:
         tag = "E" if e["level"] == "error" else "W"
         L.append(f"{tag} {e['code']} [{e['where']}] {e['msg']}")
@@ -119,7 +153,8 @@ def inspect_text(res: BuildResult, anchors: bool = True) -> str:
             continue
         s = f.summary()
         bb = s.get("bbox")
-        line = f"- {f.id} ({f.use},{f.op}" + (f" x{f.instances}" if f.instances > 1 else "") + f") dV={s['dV']:g}"
+        line = (f"- {f.id} ({f.use},{f.op}" + (f" x{f.instances}" if f.instances > 1 else "")
+                + (f",{f.material}" if f.material else "") + f") dV={s['dV']:g}")
         if bb:
             line += f" bbox {list(bb['min'])}..{list(bb['max'])}"
         L.append(line)

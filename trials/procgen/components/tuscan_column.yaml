@@ -1,0 +1,22 @@
+component: tuscan_column
+kind: add
+summary: "Tuscan column after procgen city-gate: square foot, turned tapered shaft, square abacus; base on the anchor"
+params:
+  r: {default: 430, doc: shaft radius}
+  h: {default: 6020, doc: shaft height}
+features:
+  - id: shaft
+    use: revolve
+    with:
+      points: [[0, 0], ["=r*0.86", 0], ["=r*1.04", 55], ["=r*1.04", 160], ["=r*0.90", 250], ["=r*0.82", 380],
+               ["=r*0.74", "=h*0.90"], ["=r*0.80", "=h*0.925"], ["=r*1.06", "=h*0.96"], ["=r*1.06", =h], [0, =h]]
+  - id: foot
+    use: block
+    on: world
+    with: {l: "=r*2.5", w: "=r*2.5", h: 120}
+  - id: abacus
+    use: block
+    on: shaft.tip
+    with: {l: "=r*2.55", w: "=r*2.55", h: "=h*0.0355"}
+checks:
+  bbox: {size: ["=r*2.55", "=r*2.55", "=h*1.0355"], tol: 0.01}

@@ -45,20 +45,26 @@ def _font(size):
         return ImageFont.load_default()
 
 
-def tessellate(body, tol=0.05):
-    verts, tris, fids = [], [], []
+def tessellate(body, tol=0.05, parts=None):
+    """parts: optional [(shape, rgb)] material regions; returns per-triangle colour too."""
+    verts, tris, fids, cols = [], [], [], []
     off = 0
     bb = body.bounding_box()
     tol = max(tol, max(bb.size.X, bb.size.Y, bb.size.Z) / 800)
-    for fi, face in enumerate(body.faces()):
-        v, t = face.tessellate(tol, 0.2)
-        if not t:
-            continue
-        verts.extend((p.X, p.Y, p.Z) for p in v)
-        tris.extend((a + off, b + off, c + off) for a, b, c in t)
-        fids.extend([fi] * len(t))
-        off += len(v)
-    return np.array(verts, float), np.array(tris, int), np.array(fids, int)
+    fi = 0
+    for shp, rgb in parts or [(body, None)]:
+        c = BASE / 255 if rgb is None else np.array(rgb, float)
+        for face in shp.faces():
+            v, t = face.tessellate(tol, 0.2)
+            fi += 1
+            if not t:
+                continue
+            verts.extend((p.X, p.Y, p.Z) for p in v)
+            tris.extend((a + off, b + off, c_ + off) for a, b, c_ in t)
+            fids.extend([fi] * len(t))
+            cols.extend([c] * len(t))
+            off += len(v)
+    return np.array(verts, float), np.array(tris, int), np.array(fids, int), np.array(cols, float)
 
 
 def _raster(P, tris, fids, normals, W, H, light):
@@ -120,13 +126,15 @@ def section_cut(body, axis: str):
 
 
 def render(body, path, views=("iso", "top", "front", "right"), tile=460, labels=None, title="",
-           section=None):
+           section=None, regions=None):
     """labels: list of (text, (x,y,z)) shown as markers. section: x|y|z half cut."""
     if section:
         c = body.bounding_box().center()
         keep = {"x": lambda q: q[0] <= c.X + 1e-6, "y": lambda q: q[1] >= c.Y - 1e-6,
                 "z": lambda q: q[2] <= c.Z + 1e-6}[section]
         labels = [(t, q) for t, q in labels or [] if keep(q)]
+        if regions:
+            regions = [(section_cut(r_, section), c_) for r_, c_ in regions]
         body = section_cut(body, section)
         title = (title + f"  [section {section}]").strip()
     legend = []
@@ -135,7 +143,7 @@ def render(body, path, views=("iso", "top", "front", "right"), tile=460, labels=
         num = {n: str(i + 1) for i, n in enumerate(names)}
         legend = [f"{num[n]} {n}" for n in names]
         labels = [(num[t], p) for t, p in labels]
-    V, T, F = tessellate(body)
+    V, T, F, TC = tessellate(body, parts=regions)
     if len(T) == 0:
         raise ValueError("nothing to render")
     tri_n = np.cross(V[T[:, 1]] - V[T[:, 0]], V[T[:, 2]] - V[T[:, 0]])
@@ -183,7 +191,14 @@ def render(body, path, views=("iso", "top", "front", "right"), tile=460, labels=
         col = np.empty((tile, tile, 3), np.uint8)
         col[:] = BG
         mask = fid >= 0
-        col[mask] = np.clip(BASE[None, :] * shade[mask][:, None] + 40, 0, 255).astype(np.uint8)
+        fcol = {}  # face id -> colour
+        for k in range(len(F)):
+            fcol.setdefault(F[k], TC[k])
+        lut = np.zeros((max(F) + 2, 3))
+        for k_, c_ in fcol.items():
+            lut[k_] = c_ * 255
+        base = lut[fid[mask]]
+        col[mask] = np.clip(base * shade[mask][:, None] * 0.85 + 30, 0, 255).astype(np.uint8)
         col[_edges(fid, depth, s)] = EDGE
         ox, oy = (idx % cols) * tile, (idx // cols) * tile + y0
         img.paste(Image.fromarray(col), (ox, oy))

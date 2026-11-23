@@ -282,3 +282,115 @@ def test_section_render(tmp_path):
     res = build_spec(load_spec(EX / "enclosure.yaml"), base_dir=EX)
     p = render(res.body, tmp_path / "s.png", section="y", labels=[("a", (0, 10, 5)), ("b", (0, -10, 5))])
     assert Path(p).exists()
+
+
+# ---------------------------------------------------------------- multi-material + city-gate trial
+
+MULTI = """
+part: mm
+material: white
+materials: {accent: {color: "#d4af37", density: 19.3}}
+features:
+  - {id: base, use: box, with: {l: 40, w: 20, h: 10}}
+  - {id: logo, use: block, op: paint, on: base.top, at: [0, 0, -1], material: red, with: {l: 10, w: 10, h: 1}}
+  - {id: knob, use: cylinder, on: base.top, material: accent, with: {d: 6, h: 5}}
+checks:
+  materials: 3
+  material_at: [[4, 0, 9.5, red], [0, 0, 12, accent], [15, 0, 5, white]]
+"""
+
+
+def test_multi_material_regions_and_probes():
+    res = build_spec(yaml_load(MULTI))
+    assert res.ok, [i.as_dict() for i in res.issues]
+    mats = res.props["materials"]
+    assert set(mats) == {"white", "red", "accent"}
+    assert sum(m["volume"] for m in mats.values()) == pytest.approx(res.props["volume"], rel=1e-6)
+    assert mats["red"]["volume"] == pytest.approx(100)          # 10 x 10 x 1 recoloured skin
+    assert mats["accent"]["mass_g"] == pytest.approx(mats["accent"]["volume"] / 1000 * 19.3, rel=1e-3)
+
+
+def test_paint_needs_material_and_overlap():
+    s = yaml_load(MULTI)
+    s["features"][1]["at"] = [0, 0, 5]  # paint volume floats above the part
+    res = build_spec(s)
+    assert "paint_missed" in codes(res)
+    s = yaml_load(MULTI)
+    del s["features"][1]["material"]
+    assert "needs material" in build_spec(s).first_error()
+
+
+def test_unknown_material_hint_and_hidden_warning():
+    s = yaml_load(MULTI)
+    s["features"][2]["material"] = "acent"
+    assert "did you mean" in build_spec(s).first_error()
+    s = yaml_load(MULTI)
+    s["features"].append(yaml_load("{id: cover, use: block, on: base.top, material: white, with: {l: 12, w: 12, h: 6}}"))
+    s["checks"] = {}
+    res = build_spec(s)
+    assert "material_hidden" in warn_codes(res)
+
+
+def test_material_on_cut_rejected():
+    s = yaml_load(MULTI)
+    s["features"].append(yaml_load("{id: h, use: hole, on: base.top, at: [15, 0], material: red, with: {d: 3}}"))
+    assert "op: paint" in build_spec(s).first_error()
+
+
+def test_multi_material_exports(tmp_path):
+    from jigcad.project import export
+    res = build_spec(yaml_load(MULTI))
+    out = export(res.body, "mm", tmp_path, ("step", "stl", "3mf", "gltf"), regions=res.regions,
+                 palette=res.palette, default_material=res.default_material)
+    names = {Path(p).name for p in out}
+    assert {"mm.step", "mm.stl", "mm.red.stl", "mm.accent.stl", "mm.white.stl", "mm.3mf", "mm.glb"} <= names
+    import zipfile
+    model = zipfile.ZipFile(tmp_path / "mm.3mf").read("3D/3dmodel.model").decode()
+    assert model.count("displaycolor") >= 3
+    assert "STYLED_ITEM" in (tmp_path / "mm.step").read_text()
+
+
+def test_revolve_rod_arch_components():
+    s = yaml_load("""
+part: t
+features:
+  - {id: base, use: box, with: {l: 60, w: 20, h: 40}}
+  - {id: door, use: arch, on: base.front, at: [0, -20], with: {w: 16, h: 10, breakout: true}}
+  - {id: col, use: revolve, on: base.top, at: [20, 0], with: {points: [[0, 0], [5, 0], [4, 20], [0, 26]]}}
+  - {id: bar, use: rod, on: base.top, with: {a: [-25, 0, 0], b: [-15, 0, 15], d: 3}}
+checks:
+  empty_at: [[0, 0, 5], [0, 0, 17]]
+  solid_at: [[0, 0, 19], [20, 0, 65]]
+""")
+    res = build_spec(s)
+    assert res.ok, res.first_error()
+    assert res.features["col"].anchors["tip"].origin.Z == pytest.approx(66)
+
+
+def test_cone_tip_is_manifold():
+    s = yaml_load("{part: c, features: [{id: b, use: box, with: {l: 20, w: 20, h: 5}}, "
+                  "{id: cone, use: revolve, on: b.top, with: {points: [[0, 0], [8, 0], [0, 10]]}}]}")
+    res = build_spec(s)
+    assert res.ok, res.first_error()
+
+
+def test_repeat_grid_with_mirror_and_linear():
+    res = build_spec(spec_with("{id: h, use: hole, on: base.top, at: [15, 10], "
+                               "repeat: {grid: {nx: 2, dx: 6}, mirror: xy}, with: {d: 2}}"))
+    pts = sorted((round(p[0]), round(p[1])) for p in res.features["h"].points)
+    assert pts == sorted([(12, 10), (18, 10), (-12, 10), (-18, 10), (12, -10), (18, -10), (-12, -10), (-18, -10)])
+    res = build_spec(spec_with("{id: s, use: block, on: base.top, at: [-20, 0], "
+                               "repeat: {linear: {n: 3, step: [10, 0, 0]}}, with: {l: 2, w: 2, h: 2}}"))
+    assert sorted(round(p[0]) for p in res.features["s"].points) == [-20, -10, 0]
+
+
+def test_dims_min_max_and_warn_level():
+    res = build_spec(spec_with(checks="dims: [{name: t, value: '=base.size_z', min: 10}, "
+                                      "{name: w, value: '=base.size_x', max: 50, level: warn}]"))
+    assert any(i.where == "dim:t" and i.level == "error" for i in res.issues)
+    assert any(i.where == "dim:w" and i.level == "warn" for i in res.issues)
+
+
+def test_city_gate_trial_spec_loads():
+    spec = load_spec(EX.parent / "trials" / "procgen" / "city_gate.yaml")
+    assert {"materials", "material_at"} <= set(spec["checks"])

@@ -19,11 +19,12 @@ from build123d import Plane, Vector
 from . import expr as X
 from . import standards
 from .components import ParamError, get, load_all, validate_params
-from .geom import EPS, bbox_anchors, bbox_dict, classify_points, diag, place, ray_hits
+from .geom import EPS, bbox_anchors, bbox_dict, classify_points, diag, is_manifold, place, ray_hits
 
-TOP_KEYS = {"part", "component", "kind", "summary", "units", "process", "material", "params",
+TOP_KEYS = {"part", "component", "kind", "summary", "units", "process", "material", "materials", "params",
             "features", "checks", "export", "description", "interface"}
-FEATURE_KEYS = {"id", "use", "with", "on", "at", "rotate", "frame_rotate", "flip", "repeat", "op", "when", "note"}
+FEATURE_KEYS = {"id", "use", "with", "on", "at", "rotate", "frame_rotate", "flip", "repeat", "op", "when", "note",
+                "material"}
 MAX_FEATURES = 200
 MAX_INSTANCES = 400
 MAX_NESTING = 4
@@ -108,10 +109,13 @@ class FeatureRecord:
     ms: float = 0.0
     skipped: bool = False
     info: dict = field(default_factory=dict)
+    material: str | None = None       # explicit material of an add/base feature
 
     def summary(self) -> dict:
         d = {"id": self.id, "use": self.use, "op": self.op, "n": self.instances,
              "dV": round(self.vol_after - self.vol_before, 3)}
+        if self.material:
+            d["material"] = self.material
         if self.shape is not None:
             d["bbox"] = bbox_dict(self.shape.bounding_box())
         if self.points:
@@ -134,6 +138,9 @@ class BuildResult:
     failed_at: str | None = None
     ms: float = 0.0
     n_features: int = 0
+    regions: dict = field(default_factory=dict)     # material -> shape (multi-material parts)
+    palette: Any = None
+    default_material: str = "default"
 
     @property
     def ok(self) -> bool:
@@ -190,7 +197,7 @@ def _namespace(res: BuildResult, body) -> dict:
         if rec.shape is not None:
             ns[fid] = FeatureRef(rec.shape.bounding_box(), rec.points, rec.vol_after - rec.vol_before)
     if body is not None:
-        ns["body"] = FeatureRef(body.bounding_box(), [], body.volume)
+        ns["body"] = FeatureRef(body.bounding_box(), [], _vol(body))
     return ns
 
 
@@ -236,41 +243,52 @@ def _plane_from(on, res: BuildResult, body, kind: str) -> Plane:
     return anchors[an]
 
 
-def _offsets(rep) -> list[tuple[float, float, float]]:
-    """Return (du, dv, rot_deg) instance offsets in the anchor plane."""
-    if not rep:
-        return [(0.0, 0.0, 0.0)]
+def _instances(rep, at) -> list[tuple[list[float], float]]:
+    """Instance positions ([u, v, w] in the anchor frame) and extra spin (deg).
+
+    grid / polar / points / linear generate offsets added to ``at``; ``mirror``
+    (alone or combined with one of them) then mirrors every position about the
+    anchor origin.
+    """
+    a = [float(x) for x in (at or [0, 0])]
+    a += [0.0] * (3 - len(a))
+    rep = rep or {}
+    gens = [k for k in ("grid", "polar", "points", "linear") if k in rep]
+    unknown = set(rep) - {"grid", "polar", "points", "linear", "mirror"}
+    if unknown or len(gens) > 1:
+        raise SpecError("repeat: use one of grid|polar|points|linear, optionally with mirror")
+    offs: list[tuple[float, float, float, float]] = [(0.0, 0.0, 0.0, 0.0)]
     if "grid" in rep:
         g = rep["grid"]
         nx, ny = int(g.get("nx", 1)), int(g.get("ny", 1))
         dx, dy = float(g.get("dx", 0)), float(g.get("dy", 0))
-        return [((i - (nx - 1) / 2) * dx, (j - (ny - 1) / 2) * dy, 0.0) for j in range(ny) for i in range(nx)]
-    if "polar" in rep:
+        offs = [((i - (nx - 1) / 2) * dx, (j - (ny - 1) / 2) * dy, 0.0, 0.0) for j in range(ny) for i in range(nx)]
+    elif "polar" in rep:
         g = rep["polar"]
         n, r = int(g["n"]), float(g["r"])
         start, sweep = float(g.get("start", 0)), float(g.get("sweep", 360))
         step = sweep / n if abs(sweep - 360) < 1e-9 else (sweep / (n - 1) if n > 1 else 0)
         orient = bool(g.get("orient", False))
-        out = []
+        offs = []
         for k in range(n):
-            a = start + k * step
-            out.append((r * math.cos(math.radians(a)), r * math.sin(math.radians(a)), a if orient else 0.0))
-        return out
+            t = start + k * step
+            offs.append((r * math.cos(math.radians(t)), r * math.sin(math.radians(t)), 0.0, t if orient else 0.0))
+    elif "points" in rep:
+        offs = [(float(p[0]), float(p[1]), 0.0, float(p[2]) if len(p) > 2 else 0.0) for p in rep["points"]]
+    elif "linear" in rep:
+        g = rep["linear"]
+        n = int(g["n"])
+        st = [float(x) for x in g["step"]] + [0.0] * (3 - len(g["step"]))
+        offs = [(st[0] * k, st[1] * k, st[2] * k, 0.0) for k in range(n)]
+    pos = [([a[0] + du, a[1] + dv, a[2] + dw], dr) for du, dv, dw, dr in offs]
     if "mirror" in rep:
         m = str(rep["mirror"])
-        base = [(1, 1)]
-        if m == "x":
-            base = [(1, 1), (-1, 1)]
-        elif m == "y":
-            base = [(1, 1), (1, -1)]
-        elif m == "xy":
-            base = [(1, 1), (-1, 1), (1, -1), (-1, -1)]
-        else:
-            raise SpecError("repeat.mirror must be x|y|xy (mirrors the 'at' offset about the anchor origin)")
-        return [(sx, sy, 0.0) for sx, sy in base]  # handled specially (multiplies at)
-    if "points" in rep:
-        return [(float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0) for p in rep["points"]]
-    raise SpecError("repeat must contain grid|polar|mirror|points")
+        signs = {"x": [(1, 1), (-1, 1)], "y": [(1, 1), (1, -1)],
+                 "xy": [(1, 1), (-1, 1), (1, -1), (-1, -1)]}.get(m)
+        if signs is None:
+            raise SpecError("repeat.mirror must be x|y|xy (mirrors positions about the anchor origin)")
+        pos = [([p[0] * sx, p[1] * sy, p[2]], dr) for sx, sy in signs for p, dr in pos]
+    return pos
 
 
 def _union(shapes):
@@ -280,8 +298,22 @@ def _union(shapes):
     return acc
 
 
+_VOLS: dict = {}
+
+
 def _vol(s) -> float:
-    return s.volume if s is not None else 0.0
+    """Volume with a per-build cache (big bodies are queried many times)."""
+    if s is None:
+        return 0.0
+    key = id(s)
+    hit = _VOLS.get(key)
+    if hit is not None and hit[0] is s:
+        return hit[1]
+    v = s.volume
+    if len(_VOLS) > 4096:
+        _VOLS.clear()
+    _VOLS[key] = (s, v)
+    return v
 
 
 # --------------------------------------------------------------------------- per-feature checks
@@ -324,16 +356,35 @@ def _check_cut(res, fid, pre, post, axis_outs, min_wall):
                     issues.append(Issue("warn", "multi_wall", tag,
                                         f"through-all cut pierces {runs} separate walls along {list(out.axis)}",
                                         "if only the first wall is intended use depth: next"))
-        _wall_and_breakout(res, tag, pre, tool, out, min_wall)
+        _wall_and_breakout(res, tag, pre, tool, out, min_wall, rem_shape)
 
 
-def _wall_and_breakout(res, tag, pre, tool, out, min_wall):
-    faces = list(pre.faces())
-    if len(faces) > 400 or not out.axis:
+def _wall_and_breakout(res, tag, pre, tool, out, min_wall, removed=None):
+    if not out.axis:
+        return
+    if removed is None:
+        removed = pre & tool      # no overshoot: closest points stay inside the part
+    if removed is None or _vol(removed) < VOL_EPS:
+        return
+    # only faces near the cut can make a thin wall or a breakout: bbox prefilter
+    rb = removed.bounding_box()
+    m = max(3 * min_wall, 5.0)
+    lo = (rb.min.X - m, rb.min.Y - m, rb.min.Z - m)
+    hi = (rb.max.X + m, rb.max.Y + m, rb.max.Z + m)
+    faces = []
+    for f in pre.faces():
+        fb = f.bounding_box()
+        if (fb.max.X >= lo[0] and fb.min.X <= hi[0] and fb.max.Y >= lo[1] and fb.min.Y <= hi[1]
+                and fb.max.Z >= lo[2] and fb.min.Z <= hi[2]):
+            faces.append(f)
+    if len(faces) > 400:
         return
     ax = Vector(*out.axis)
-    solid_after = pre - tool
-    removed = pre & tool          # no overshoot: closest points stay inside the part
+
+    def material_after(pts):  # in the part and not removed by this tool (no big boolean)
+        a = classify_points(pre, pts)
+        b = classify_points(tool, pts)
+        return [x and not y for x, y in zip(a, b)]
     min_d, min_info = None, None
     for f in faces:
         try:
@@ -357,7 +408,7 @@ def _wall_and_breakout(res, tag, pre, tool, out, min_wall):
                 return
         else:
             mid = (pt_tool + pt_face) * 0.5
-            if not any(classify_points(solid_after, [mid, mid + ax * 0.02, mid - ax * 0.02])):
+            if not any(material_after([mid, mid + ax * 0.02, mid - ax * 0.02])):
                 continue  # gap through air, not a wall
             if min_d is None or d < min_d:
                 min_d, min_info = d, pt_face
@@ -372,31 +423,48 @@ def _wall_and_breakout(res, tag, pre, tool, out, min_wall):
 
 
 def _check_add(res, fid, pre, post, outs):
+    """Per-instance add checks, cheap first: volume bookkeeping and point classification;
+    distance / boolean queries against the (large) body only when something is wrong."""
+    n_pre, n_post = len(pre.solids()), len(post.solids())
+    split = n_post > n_pre
+    man_pre = is_manifold(pre)
+    man_post = is_manifold(post) if man_pre else True
+    grown = _vol(post) - _vol(pre)
+    tools = [_vol(t) for _, t in outs]
+    if not split and man_post and abs(grown - sum(tools)) <= 1e-7 * max(sum(tools), 1.0) + 1e-6 and grown > VOL_EPS:
+        return  # every instance attached, nothing overlaps the body: all good
+    pbb = pre.bounding_box()
     for k, (out, tool) in enumerate(outs):
         tag = fid if len(outs) == 1 else f"{fid}[{k}]"
-        d = pre.distance_to(tool)
-        if d > 1e-5:
-            tb, bb = bbox_dict(tool.bounding_box()), bbox_dict(pre.bounding_box())
-            res.issues.append(Issue("error", "floating", tag,
-                                    f"added material is {d:.3f} mm away from the body (floating): it spans "
-                                    f"{list(tb['min'])}..{list(tb['max'])}, body {list(bb['min'])}..{list(bb['max'])}",
-                                    "compare the spans to find the wrong axis/sign; note flip mirrors v; "
-                                    "use on: <feature>.<face> so it sits on a real face"))
-            continue
-        overlap = _vol(pre & tool)
-        added = _vol(tool) - overlap
-        if overlap < VOL_EPS and len(post.solids()) > len(pre.solids()):
-            res.issues.append(Issue("error", "touch_only", tag,
-                                    "added material only touches the body along a line/point (no shared area), "
-                                    "typical on curved faces",
-                                    "sink it in: at: [u, v, -s] and add s to its height (s ≈ 2-5 mm)"))
-            return
-        if added < VOL_EPS:
-            res.issues.append(Issue("error", "add_buried", tag, "added material is completely inside the body",
-                                    "it grows along +normal of the anchor: check flip / anchor face"))
-    if len(post.solids()) > len(pre.solids()):
-        res.issues.append(Issue("error", "disjoint", fid, f"body split into {len(post.solids())} solids after add"))
-    elif all(s.is_manifold for s in pre.solids()) and not all(s.is_manifold for s in post.solids()):
+        if split:  # some instance is not connected: find which (distance only here)
+            d = pre.distance_to(tool)
+            if d > 1e-5:
+                tb, bb = bbox_dict(tool.bounding_box()), bbox_dict(pbb)
+                res.issues.append(Issue("error", "floating", tag,
+                                        f"added material is {d:.3f} mm away from the body (floating): it spans "
+                                        f"{list(tb['min'])}..{list(tb['max'])}, body {list(bb['min'])}..{list(bb['max'])}",
+                                        "compare the spans to find the wrong axis/sign; note flip mirrors v; "
+                                        "use on: <feature>.<face> so it sits on a real face"))
+                continue
+            if _vol(pre & tool) < VOL_EPS:
+                res.issues.append(Issue("error", "touch_only", tag,
+                                        "added material only touches the body along a line/point (no shared area), "
+                                        "typical on curved faces",
+                                        "sink it in: at: [u, v, -s] and add s to its height (s ≈ 2-5 mm)"))
+                return
+        # buried? screen with points (centre + bbox-interior samples), confirm with a boolean
+        tb = tool.bounding_box()
+        c = tb.center()
+        probes = [c] + [Vector(c.X + sx * tb.size.X * 0.3, c.Y + sy * tb.size.Y * 0.3, c.Z + sz * tb.size.Z * 0.3)
+                        for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
+        probes = [p_ for p_, inside in zip(probes, classify_points(tool, probes)) if inside]
+        if probes and all(classify_points(pre, probes)):
+            if _vol(tool) - _vol(pre & tool) < VOL_EPS:
+                res.issues.append(Issue("error", "add_buried", tag, "added material is completely inside the body",
+                                        "it grows along +normal of the anchor: check flip / anchor face"))
+    if split:
+        res.issues.append(Issue("error", "disjoint", fid, f"body split into {n_post} solids after add"))
+    elif man_pre and not man_post:
         res.issues.append(Issue("error", "non_manifold", fid,
                                 "fusing this feature created a non-manifold edge/vertex (bodies touch along a "
                                 "line or point, e.g. a wheel standing on a rail)",
@@ -458,6 +526,13 @@ def build_spec(spec: dict, overrides: dict | None = None, base_dir: Path | None 
         return res
     checks_spec = spec.get("checks") or {}
     min_wall = float(checks_spec.get("min_wall", standards.PROCESS[process]["min_wall"]))
+    from .materials import MaterialError, Palette
+    try:
+        res.palette = Palette(spec.get("materials"))
+        res.default_material = res.palette.check(str(spec.get("material") or "default"))
+    except MaterialError as e:
+        res.issues.append(Issue("error", "material", "materials", str(e)))
+        return res
 
     feats = spec.get("features") or []
     if not feats:
@@ -520,8 +595,10 @@ def _apply_feature(res, f, fid, body, base_dir, process, nested, min_wall):
         res.features[fid] = FeatureRecord(fid, comp.name, comp.kind, "skip", skipped=True)
         return body
     op = f.get("op") or ("cut" if comp.kind == "cut" else "modifier" if comp.kind == "modifier" else "add")
-    if op not in ("add", "cut", "modifier", "intersect"):
-        raise SpecError("op must be add|cut|intersect")
+    if op not in ("add", "cut", "modifier", "intersect", "paint"):
+        raise SpecError("op must be add|cut|intersect|paint")
+    if op == "paint" and (f.get("material") is None or body is None or comp.kind == "modifier"):
+        raise SpecError("op: paint recolours existing material: needs material: and an existing body")
     if body is None and (op != "add" or comp.kind not in ("base", "add")):
         raise SpecError(f"first feature must create material (base component), got {comp.name} [{comp.kind}]")
     params = validate_params(comp, _resolve(f.get("with") or {}, ns, f"{fid}.with"))
@@ -532,10 +609,19 @@ def _apply_feature(res, f, fid, body, base_dir, process, nested, min_wall):
     at = _resolve(f.get("at"), ns, f"{fid}.at")
     rot = float(_resolve(f.get("rotate", 0), ns, f"{fid}.rotate") or 0)
     rep = _resolve(f.get("repeat"), ns, f"{fid}.repeat")
-    offs = _offsets(rep)
+    offs = _instances(rep, at)
     if len(offs) > MAX_INSTANCES:
         raise SpecError(f"repeat produces {len(offs)} instances > {MAX_INSTANCES}")
     rec = FeatureRecord(fid, comp.name, comp.kind, op, instances=len(offs), vol_before=_vol(body))
+    if f.get("material") is not None:
+        if op not in ("add", "paint"):
+            raise SpecError(f"material: only on features that add material or op: paint (this one is {op}); "
+                            "to recolour existing material use op: paint")
+        from .materials import MaterialError
+        try:
+            rec.material = res.palette.check(str(_resolve(f["material"], ns, f"{fid}.material")))
+        except MaterialError as e:
+            raise SpecError(str(e)) from e
     res.features[fid] = rec  # register early so checks can attach info
 
     if comp.kind == "modifier":
@@ -549,16 +635,8 @@ def _apply_feature(res, f, fid, body, base_dir, process, nested, min_wall):
         return new
 
     outs = []
-    mirror = rep and "mirror" in rep
-    for du, dv, drot in offs:
-        if mirror:
-            a = list(at or [0, 0])
-            a[0], a[1] = float(a[0]) * du, float(a[1]) * dv
-            pl = place(base_plane, a, rot, bool(f.get("flip")))
-        else:
-            a = list(at or [0, 0])
-            a = [float(a[0]) + du, float(a[1]) + dv] + ([float(a[2])] if len(a) > 2 else [])
-            pl = place(base_plane, a, rot + drot, bool(f.get("flip")))
+    for a, drot in offs:
+        pl = place(base_plane, a, rot + drot, bool(f.get("flip")))
         ctx = Ctx(pl, body, res, base_dir, process, nested)
         out = comp.build(ctx, params)
         if not out.points:  # every instance is at least locatable by its anchor origin
@@ -575,6 +653,13 @@ def _apply_feature(res, f, fid, body, base_dir, process, nested, min_wall):
         _check_add(res, fid, body, new, outs)
     elif op == "intersect":
         new = body & tool
+    elif op == "paint":  # geometry unchanged; tool only claims material for a colour region
+        new = body
+        for k, (o_, t_) in enumerate(outs):
+            if _vol(body & t_) < VOL_EPS:
+                tag = fid if len(outs) == 1 else f"{fid}[{k}]"
+                res.issues.append(Issue("error", "paint_missed", tag, "paint volume does not overlap the part",
+                                        "move it onto the material you want to recolour (check on/at/flip)"))
     else:
         new = body - tool
         _check_cut(res, fid, body, new, outs, min_wall)
@@ -587,6 +672,9 @@ def _apply_feature(res, f, fid, body, base_dir, process, nested, min_wall):
     if op == "cut":
         removed = body & tool
         rec.shape = removed if _vol(removed) > VOL_EPS else tool
+    elif op == "paint":
+        painted = body & tool
+        rec.shape = painted if _vol(painted) > VOL_EPS else tool
     else:
         rec.shape = tool
     rec.anchors = bbox_anchors(rec.shape.bounding_box())
@@ -612,7 +700,7 @@ def _num_close(a, b, tol):
 def _global_checks(res: BuildResult, body, cs: dict, spec: dict, run_checks: bool):
     bb = body.bounding_box()
     solids = body.solids()
-    props = {"volume": round(body.volume, 3), "area": round(body.area, 3), "bbox": bbox_dict(bb),
+    props = {"volume": round(_vol(body), 3), "area": round(body.area, 3), "bbox": bbox_dict(bb),
              "solids": len(solids), "faces": len(body.faces()), "edges": len(body.edges())}
     try:
         com = body.center()
@@ -622,11 +710,42 @@ def _global_checks(res: BuildResult, body, cs: dict, spec: dict, run_checks: boo
     import hashlib
     verts = sorted((round(v.X, 3), round(v.Y, 3), round(v.Z, 3)) for v in body.vertices())
     props["geom_hash"] = hashlib.sha1(repr(verts).encode()).hexdigest()[:10]  # position-sensitive
-    mat = spec.get("material")
-    if mat:
-        dens = DENSITY.get(str(mat).lower())
-        if dens:
-            props["mass_g"] = round(body.volume / 1000 * dens, 2)
+    pal = res.palette
+    default = res.default_material
+    owner_recs = [f for f in res.features.values() if f.op in ("add", "paint") and not f.skipped and f.shape is not None]
+    owners = [(f.material or default, f.shape) for f in owner_recs]
+    used = {m for m, _ in owners}
+    contrib = []
+    if len(used) > 1 or (used and used != {default}):
+        from .materials import partition, partition_events
+        events = [(f.op, f.material, f.shape) for f in res.features.values()
+                  if not f.skipped and f.op in ("add", "paint", "cut", "modifier", "intersect")]
+        res.regions, contrib = partition_events(body, events, default)
+        total = sum(r_.volume for r_ in res.regions.values())
+        if abs(total - _vol(body)) > 1e-6 * max(_vol(body), 1.0) + 1e-6:  # safety net: exact method
+            res.regions, contrib = partition(body, owners, default)
+    def _dens(m):
+        d = pal.density(m) if pal else None
+        if d is None and pal:
+            d = pal.density(default)
+        return d if d is not None else DENSITY.get(str(spec.get("material", "")).lower())
+    if res.regions:
+        mats = {}
+        mass = 0.0
+        for m, shp in res.regions.items():
+            v = shp.volume
+            d = _dens(m)
+            mats[m] = {"color": pal.hex(m), "volume": round(v, 3), "pct": round(100 * v / _vol(body), 2)}
+            if d:
+                mats[m]["mass_g"] = round(v / 1000 * d, 2)
+                mass += v / 1000 * d
+        props["materials"] = mats
+        if mass and all("mass_g" in d for d in mats.values()):
+            props["mass_g"] = round(mass, 2)
+    else:
+        d = _dens(default)
+        if d:
+            props["mass_g"] = round(_vol(body) / 1000 * d, 2)
     res.props = props
     if not run_checks:
         return
@@ -637,7 +756,7 @@ def _global_checks(res: BuildResult, body, cs: dict, spec: dict, run_checks: boo
             res.issues.append(Issue(level, "check", name, detail, fix))
 
     chk("valid", body.is_valid, "B-Rep validity (BRepCheck)", "a boolean produced bad geometry; simplify the last feature")
-    chk("manifold", all(s.is_manifold for s in solids), "closed manifold solids")
+    chk("manifold", is_manifold(body), "closed manifold solids")
     want = int(cs.get("solids", 1))
     chk("solids", len(solids) == want, f"{len(solids)} solid(s), expected {want}",
         "disconnected pieces: a cut split the part or an add is floating")
@@ -666,10 +785,10 @@ def _global_checks(res: BuildResult, body, cs: dict, spec: dict, run_checks: boo
         if isinstance(v, dict) and "expect" in v:
             e = float(ev(v["expect"], "volume.expect"))
             tp = float(v.get("tol_pct", 0.5))
-            chk("volume", abs(body.volume - e) <= abs(e) * tp / 100, f"{body.volume:.3f} vs {e:.3f} (±{tp}%)")
+            chk("volume", abs(_vol(body) - e) <= abs(e) * tp / 100, f"{_vol(body):.3f} vs {e:.3f} (±{tp}%)")
         elif isinstance(v, dict):
             lo, hi = ev(v.get("min", 0), "volume.min"), ev(v.get("max", float("inf")), "volume.max")
-            chk("volume", lo <= body.volume <= hi, f"{body.volume:.3f} in [{lo}, {hi}]")
+            chk("volume", lo <= _vol(body) <= hi, f"{_vol(body):.3f} in [{lo}, {hi}]")
     if "com" in cs:
         e = ev(cs["com"]["expect"], "com.expect")
         tol = float(cs["com"].get("tol", 0.1))
@@ -677,14 +796,62 @@ def _global_checks(res: BuildResult, body, cs: dict, spec: dict, run_checks: boo
         chk("com", all(x is None or _num_close(g, x, tol) for g, x in zip(got, e)), f"{got} vs {e} (tol {tol})")
     for k, item in enumerate(cs.get("dims") or []):
         nm = item.get("name", f"dim{k}")
+        lvl = "warn" if item.get("level") == "warn" else "error"
+        fix = str(item.get("fix", ""))
         try:
-            got = ev(item["value"], f"dims.{nm}")
-            e = ev(item["expect"], f"dims.{nm}")
-        except SpecError as err:
-            chk(f"dim:{nm}", False, str(err))
+            got = float(ev(item["value"], f"dims.{nm}"))
+            e = ev(item["expect"], f"dims.{nm}") if "expect" in item else None
+            lo = ev(item["min"], f"dims.{nm}") if "min" in item else None
+            hi = ev(item["max"], f"dims.{nm}") if "max" in item else None
+        except (SpecError, KeyError) as err:
+            chk(f"dim:{nm}", False, f"bad dims entry: {err} (needs value + expect | min | max)")
+            continue
+        if e is None and lo is None and hi is None:
+            chk(f"dim:{nm}", False, "dims entry needs expect, min or max")
             continue
         tol = float(item.get("tol", 0.01))
-        chk(f"dim:{nm}", _num_close(got, e, tol), f"{float(got):.4f} vs {float(e):.4f} (tol {tol})")
+        if e is not None:
+            chk(f"dim:{nm}", _num_close(got, e, tol), f"{got:.4f} vs {float(e):.4f} (tol {tol})", fix, lvl)
+        else:
+            ok = (lo is None or got >= float(lo) - 1e-9) and (hi is None or got <= float(hi) + 1e-9)
+            rng = f"[{'-inf' if lo is None else f'{float(lo):.4f}'}, {'inf' if hi is None else f'{float(hi):.4f}'}]"
+            chk(f"dim:{nm}", ok, f"{got:.4f} not in {rng}" if not ok else f"{got:.4f} in {rng}", fix, lvl)
+    # ---- multi-material checks
+    for rec, vol in zip(owner_recs, contrib):
+        if rec.material and vol <= 1e-9:
+            res.issues.append(Issue("warn", "material_hidden", rec.id,
+                                    f"material '{rec.material}' of this feature is not visible in the final part "
+                                    "(covered by later features or cut away)",
+                                    "later features win where they overlap: reorder, or drop the material"))
+    if "materials" in cs:
+        want = cs["materials"]
+        n = len(res.regions) or 1
+        if isinstance(want, dict):
+            lo, hi = int(want.get("min", 0)), int(want.get("max", 10 ** 6))
+            chk("materials", lo <= n <= hi, f"{n} material(s), expected [{lo}, {hi}]")
+        else:
+            chk("materials", n == int(want), f"{n} material(s), expected {int(want)}")
+    min_island = float(cs.get("min_island", 1.0))
+    for m, shp in res.regions.items():
+        small = [s_.volume for s_ in shp.solids() if s_.volume < min_island]
+        if small:
+            res.issues.append(Issue("warn", "material_island", m,
+                                    f"{len(small)} tiny '{m}' island(s) < {min_island:g} mm3 (unprintable colour specks)",
+                                    "enlarge/merge them or give them the neighbouring material"))
+    for item in ev(cs.get("material_at") or [], "material_at"):
+        p_, want_m = item[:3], str(item[3])
+        got = res.default_material
+        if res.regions:
+            got = None
+            for m, shp in res.regions.items():
+                if classify_points(shp, [Vector(*p_)])[0]:
+                    got = m
+                    break
+        elif not classify_points(body, [Vector(*p_)])[0]:
+            got = None
+        chk(f"material_at{list(p_)}", got == want_m, f"{got or 'empty'} at {list(p_)}, expected {want_m}",
+            "colour assignment differs from intent: check which feature covers this point last")
+
     for kind in ("solid_at", "empty_at"):
         pts = ev(cs.get(kind) or [], kind)
         if pts:

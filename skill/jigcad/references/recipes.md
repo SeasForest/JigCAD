@@ -20,3 +20,13 @@ standoffs `on: <box>.bottom, flip: true, at: [x, y, "=wall"]` → wall cut-outs 
 edges so later holes are not chamfered. Selectors: all vertical outer_vertical horizontal top bottom circular linear.
 
 **Variants**: params + `when:`; try sizes with `jig check spec.yaml -s L=150`.
+
+**Two-colour print with a logo**: base `material: white`; `block {op: paint, on: base.top,
+at: [0, 0, -0.6], material: black, with: {l, w, h: 0.6}}` (or a `profile` outline) → the slicer
+gets `part.white.stl` + `part.black.stl` / one 3MF with two coloured objects.
+
+**Architectural kit (procgen style)**: params copied from the kit's datum table; masonry
+`box` + `arch` passage; courses as `notch` joint grooves (`grid ny`) + `op: paint` bands
+(`linear` along the normal); columns as a promoted composite (`components/*.yaml`,
+`revolve` shaft); drum/dome via `revolve`; probes `material_at` for every material.
+See `trials/procgen/city_gate.yaml`.

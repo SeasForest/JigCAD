@@ -145,11 +145,16 @@ def classify_points(solid, pts: Iterable[Vector]) -> list[bool]:
     from OCP.BRepClass3d import BRepClass3d_SolidClassifier
     from OCP.gp import gp_Pnt
     from OCP.TopAbs import TopAbs_IN
-    cls = BRepClass3d_SolidClassifier(solid.wrapped)
-    out = []
-    for p in pts:
-        cls.Perform(gp_Pnt(p.X, p.Y, p.Z), 1e-6)
-        out.append(cls.State() == TopAbs_IN)
+    pts = list(pts)
+    solids = solid.solids() if hasattr(solid, "solids") else [solid]
+    out = [False] * len(pts)
+    for sol in solids:
+        cls = BRepClass3d_SolidClassifier(sol.wrapped)
+        for i, p in enumerate(pts):
+            if out[i]:
+                continue
+            cls.Perform(gp_Pnt(p.X, p.Y, p.Z), 1e-6)
+            out[i] = cls.State() == TopAbs_IN
     return out
 
 
@@ -167,3 +172,56 @@ def parallel(a: Vector, b: Vector, tol=1e-4) -> bool:
 
 def axis_z() -> Axis:
     return Axis.Z
+
+
+_MANI: dict = {}
+
+
+def is_manifold(shape) -> bool:
+    """Fast path: build123d's check (C++ maps, ms). Only when it says "no" run the precise
+    check below, which forgives degenerated edges (cone tips) that build123d flags."""
+    key = id(shape)
+    hit = _MANI.get(key)
+    if hit is not None and hit[0] is shape:
+        return hit[1]
+    try:
+        ok = all(s_.is_manifold for s_ in shape.solids())
+    except Exception:  # noqa: BLE001
+        ok = False
+    if not ok:
+        ok = _is_manifold_precise(shape)
+    if len(_MANI) > 2048:
+        _MANI.clear()
+    _MANI[key] = (shape, ok)
+    return ok
+
+
+def _is_manifold_precise(shape) -> bool:
+    """Every real edge is shared by exactly two face uses.
+
+    Ignores degenerated edges (cone apex, sphere poles) and counts seam edges
+    (closed periodic faces) as two uses; build123d's own check flags revolved
+    cone tips as non-manifold."""
+    from OCP.BRep import BRep_Tool
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+    from OCP.TopExp import TopExp
+    from OCP.TopoDS import TopoDS
+    from OCP.collections import IndexedDataMap_TopoDS_Shape_List_TopoDS_Shape_TopTools_ShapeMapHasher as _Map
+    for sol in (shape.solids() if hasattr(shape, "solids") else [shape]):
+        m = _Map()
+        TopExp.MapShapesAndAncestors_s(sol.wrapped, TopAbs_EDGE, TopAbs_FACE, m)
+        for i in range(1, m.Extent() + 1):
+            e = TopoDS.Edge(m.FindKey(i))
+            if BRep_Tool.Degenerated_s(e):
+                continue
+            faces = m.FindFromIndex(i)
+            uses = 0
+            seen = []
+            for f in faces:
+                if any(f.IsSame(x) for x in seen):
+                    continue
+                seen.append(f)
+                uses += 2 if BRep_Tool.IsClosed_s(e, TopoDS.Face(f)) else 1
+            if uses != 2:
+                return False
+    return True

@@ -74,7 +74,8 @@ def job_build(spec, overrides, export_formats, do_render, check_only, out_dir=No
     rep = report(res)
     od = Path(out_dir) if out_dir else sp.parent / "out" / res.name
     if res.ok and not check_only:
-        rep["outputs"] = export(res.body, res.name, od, export_formats)
+        rep["outputs"] = export(res.body, res.name, od, export_formats, regions=res.regions,
+                                palette=res.palette, default_material=res.default_material)
         rep["snapshot"] = f"v{snapshot(sp, res.name, rep, overrides)} (verified state saved; `jig log {spec}`)"
     if not res.ok:
         from .project import history
@@ -86,24 +87,27 @@ def job_build(spec, overrides, export_formats, do_render, check_only, out_dir=No
     return {"text": format_text(rep), "json": rep, "code": 0 if res.ok else 1}
 
 
-def _render(res, od, labels=True, views=("iso", "top", "front", "right"), path=None, section=None):
+def _render(res, od, labels=True, views=("iso", "top", "front", "right"), path=None, section=None, tile=460):
     from .render import render
     od.mkdir(parents=True, exist_ok=True)
     lab = [(fid, p) for fid, f in res.features.items() for p in f.points[:12]] if labels else None
     path = path or od / f"{res.name}.png"
-    render(res.body, path, views=views, labels=lab, section=section,
+    regions = None
+    if res.regions:
+        regions = [(shp, res.palette.color(m)) for m, shp in res.regions.items()]
+    render(res.body, path, views=views, labels=lab, section=section, regions=regions, tile=tile,
            title=f"{res.name}  " + ("PASS" if res.ok else f"FAIL @ {res.failed_at or 'checks'}"))
     return str(path)
 
 
-def job_render(spec, overrides, views, out, labels, section=None):
+def job_render(spec, overrides, views, out, labels, section=None, tile=460):
     from .engine import build_spec, load_spec
     sp = Path(spec)
     res = build_spec(load_spec(sp), overrides=overrides, base_dir=sp.parent, run_checks=False)
     if res.body is None:
         return {"text": f"FAIL nothing to render: {res.first_error()}", "code": 1}
     od = sp.parent / "out" / res.name
-    p = _render(res, od, labels, tuple(views), Path(out) if out else None, section)
+    p = _render(res, od, labels, tuple(views), Path(out) if out else None, section, tile)
     return {"text": f"render: {p}" + (f"\nnote: build stopped at '{res.failed_at}'" if res.failed_at else ""),
             "json": {"render": p}, "code": 0}
 
@@ -247,6 +251,7 @@ def main(argv=None):
     r.add_argument("-o", "--out")
     r.add_argument("--no-labels", action="store_true")
     r.add_argument("--section", choices=["x", "y", "z"], help="cut away the half facing that view to see inside")
+    r.add_argument("--tile", type=int, default=460, help="pixel size of each view")
 
     c = sub.add_parser("comp", help="component library")
     c.add_argument("action", choices=["list", "show", "test"])
@@ -300,7 +305,7 @@ def main(argv=None):
         return _emit(_run(job_inspect, a.timeout, spec=a.spec, overrides=ov, anchors=not a.no_anchors), a.json)
     if a.cmd == "render":
         return _emit(_run(job_render, a.timeout, spec=a.spec, overrides=ov, views=a.views.split(","),
-                          out=a.out, labels=not a.no_labels, section=a.section), a.json)
+                          out=a.out, labels=not a.no_labels, section=a.section, tile=a.tile), a.json)
     if a.cmd == "comp":
         if a.action != "list" and not a.name:
             print("component name required")

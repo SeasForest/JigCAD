@@ -1,0 +1,415 @@
+# procgen-hy4 examples/hy4/city-gate.py (Ledoux-style toll gate), re-modelled with JigCAD, mm.
+# Frame as procgen: Z up, front faces -Y, ground z=0. Datums copied from derive().
+# Multi-material: procgen slot names map 1:1 to JigCAD's built-in palette.
+part: city_gate
+process: generic
+material: chipped-limestone          # default material = backing masonry
+params:
+  width: 16000                       # control(16, 11, 22) m
+  height: 14000                      # control(14, 10, 18) m
+  columns: 4                         # control(4, 4, 6)
+  hw: "=width/2"
+  depth: "=width*0.62"
+  hd: "=depth/2"
+  plinth_top: "=height*0.105"
+  plinth_hw: "=hw + 300"
+  plinth_hd: "=hd + 1550"
+  body_top: "=height*0.76"
+  body_h: "=body_top - plinth_top"
+  zc: "=(plinth_top + body_top)/2"   # centre height of the core's side anchors
+  course_h: "=(body_h - 20)/16"
+  gap: 55                            # course joint
+  R: "=width*0.16"                   # passage radius
+  crown: "=height*0.5"
+  spring: "=crown - R"
+  ring: "=width*0.03"                # voussoir depth
+  road: "=max(R + 100, 2700)"        # half clear width of the road through the plinth
+  col_h: "=height*0.43"
+  col_r: "=col_h/14"
+  col_top: "=plinth_top + col_h"
+  ent_h: "=col_h*0.25"
+  ent_top: "=col_top + ent_h"
+  portico_y: "=hd + 920"
+  ent_depth: "=portico_y + col_r*1.2 - hd + 250"
+  ent_y: "=hd + ent_depth/2 - 120"
+  face: "=ent_y + ent_depth*0.55"    # frieze outer face
+  outer_y: "=ent_y + ent_depth*0.64" # cornice outer face
+  yrake: "=outer_y + 45"
+  ped_span: "=width*0.88"
+  ped_rise: "=ped_span/2*0.2679"
+  pdep: "=ent_depth*0.80"
+  half_l: "=ceil(columns/2)"
+  half_r: "=floor(columns/2)"
+  x_inner: "=R + col_r + 350"
+  x_outer: "=hw - col_r - 500"
+  x_step: "=(x_outer - x_inner)/min(max(half_l - 1, 1), 2)"
+  wz: "=plinth_top + body_h*0.51"    # side window centre
+  wh: "=col_h*0.13"
+  ww: "=col_h*0.17"
+  dr: "=width*0.225*1.12"            # attic drum
+  wall_r: "=dr*0.76"
+  outer_r: "=dr*1.06"
+  drum_h: "=height - body_top - 20"
+  base_h: "=drum_h*0.10"
+  cap_h: "=drum_h*0.14"
+  col_gap: "=drum_h - base_h - cap_h"
+  col_ring: "=(wall_r + outer_r)*0.52"
+  win_w: "=dr*0.15"
+  win_h: "=col_gap*0.44"
+  rise: "=dr*0.30"
+features:
+  # ------------------------------------------------ base: stepped plinth split by the road
+  - id: footing
+    use: box
+    material: stone
+    with: {l: "=plinth_hw*2 + 240", w: "=plinth_hd*2 + 240", h: 200}
+  - id: plinth
+    use: box
+    on: footing.top
+    material: stone
+    with: {l: "=plinth_hw*2", w: "=plinth_hd*2", h: "=plinth_top - 200"}
+  - id: plinth_band
+    use: block
+    op: paint
+    on: plinth.top
+    at: [0, 0, -100]
+    material: pier-ashlar
+    with: {l: "=plinth_hw*2 - 160", w: "=plinth_hd*2 - 160", h: 100}
+  - id: road_cut
+    use: notch
+    on: plinth.top
+    with: {l: "=2*road", w: "=plinth_hd*2 + 400", depth: through}
+  # ------------------------------------------------ primary mass: core, coursing, passage
+  - id: core
+    use: box
+    on: plinth.top
+    with: {l: =width, w: =depth, h: =body_h}
+  - id: passage
+    use: arch
+    on: core.front
+    at: [0, "=-body_h/2"]
+    with: {w: "=2*R", h: "=spring - plinth_top", depth: through, breakout: true}
+  - id: courses_ashlar
+    use: block
+    op: paint
+    on: core.bottom
+    flip: true
+    at: [0, 0, 20]
+    repeat: {linear: {n: 6, step: [0, 0, "=3*course_h"]}}
+    material: pier-ashlar
+    with: {l: "=width + 10", w: "=depth + 10", h: "=course_h - gap"}
+  - id: joints_front
+    use: notch
+    on: core.front
+    at: [0, "=plinth_top + 20 + 8*course_h - gap/2 - zc"]
+    repeat: {grid: {ny: 15, dy: =course_h}}
+    with: {l: "=width + 10", w: =gap, depth: 60}
+  - id: joints_back
+    use: notch
+    on: core.back
+    at: [0, "=plinth_top + 20 + 8*course_h - gap/2 - zc"]
+    repeat: {grid: {ny: 15, dy: =course_h}}
+    with: {l: "=width + 10", w: =gap, depth: 60}
+  - id: joints_sides
+    use: notch
+    on: core.right
+    at: [0, "=plinth_top + 20 + 8*course_h - gap/2 - zc"]
+    repeat: {grid: {ny: 15, dy: =course_h}}
+    with: {l: "=depth + 10", w: =gap, depth: 60}
+  - id: joints_sides_l
+    use: notch
+    on: core.left
+    at: [0, "=plinth_top + 20 + 8*course_h - gap/2 - zc"]
+    repeat: {grid: {ny: 15, dy: =course_h}}
+    with: {l: "=depth + 10", w: =gap, depth: 60}
+  - id: voussoirs
+    use: revolve
+    op: paint
+    on: core.front
+    at: [0, "=spring - zc"]
+    material: pier-ashlar
+    with: {angle: 180, points: [[=R, 0], ["=R + ring", 0], ["=R + ring", "=-(depth + 200)"], [=R, "=-(depth + 200)"]]}
+  - id: jambs
+    use: block
+    op: paint
+    on: core.bottom
+    flip: true
+    at: ["=R + ring/2", 0, 20]
+    repeat: {mirror: x}
+    material: pier-ashlar
+    with: {l: =ring, w: "=depth + 10", h: "=spring - plinth_top - 20"}
+  - id: keystone_front
+    use: profile
+    on: core.front
+    at: [0, "=spring - zc"]
+    material: pier-ashlar
+    with:
+      h: 140
+      points: [["=R*sin(-4.87)", "=R*cos(-4.87)"], ["=R*sin(4.87)", "=R*cos(4.87)"],
+               ["=(R + ring + 300)*sin(4.87)", "=(R + ring + 300)*cos(4.87)"],
+               ["=(R + ring + 300)*sin(-4.87)", "=(R + ring + 300)*cos(-4.87)"]]
+  - id: keystone_back
+    use: profile
+    on: core.back
+    at: [0, "=spring - zc"]
+    material: pier-ashlar
+    with:
+      h: 140
+      points: [["=R*sin(-4.87)", "=R*cos(-4.87)"], ["=R*sin(4.87)", "=R*cos(4.87)"],
+               ["=(R + ring + 300)*sin(4.87)", "=(R + ring + 300)*cos(4.87)"],
+               ["=(R + ring + 300)*sin(-4.87)", "=(R + ring + 300)*cos(-4.87)"]]
+  # ------------------------------------------------ porticoes (front + back by mirror y)
+  - id: columns_r
+    use: tuscan_column
+    on: plinth.top
+    at: ["=x_inner + (half_r - 1)*x_step/2", =portico_y]
+    repeat: {grid: {nx: =half_r, dx: =x_step}, mirror: y}
+    material: stone
+    with: {r: =col_r, h: =col_h}
+  - id: columns_l
+    use: tuscan_column
+    on: plinth.top
+    at: ["=-(x_inner + (half_l - 1)*x_step/2)", =portico_y]
+    repeat: {grid: {nx: =half_l, dx: =x_step}, mirror: y}
+    material: stone
+    with: {r: =col_r, h: =col_h}
+  - id: antae
+    use: block
+    on: plinth.top
+    at: ["=x_outer + col_r*1.55", "=hd + 170"]
+    repeat: {mirror: xy}
+    with: {l: "=col_r*1.2", w: 360, h: "=ent_top - plinth_top"}
+  - id: architrave
+    use: block
+    on: plinth.top
+    at: [0, =ent_y, =col_h]
+    repeat: {mirror: y}
+    material: stone
+    with: {l: "=ped_span*1.02", w: =ent_depth, h: "=ent_h*0.44"}
+  - id: frieze
+    use: block
+    on: plinth.top
+    at: [0, =ent_y, "=col_h + ent_h*0.44"]
+    repeat: {mirror: y}
+    with: {l: "=ped_span*1.02", w: "=ent_depth*1.10", h: "=ent_h*0.36"}
+  - id: cornice
+    use: block
+    on: plinth.top
+    at: [0, =ent_y, "=col_h + ent_h*0.80"]
+    repeat: {mirror: y}
+    material: pier-ashlar
+    with: {l: "=ped_span*1.02", w: "=ent_depth*1.28", h: "=ent_h*0.20"}
+  - id: dentils
+    use: block
+    on: plinth.top
+    at: [0, "=face + 30", "=col_h + ent_h*0.80 - 150"]
+    repeat: {grid: {nx: 13, dx: "=ped_span*0.86/12"}, mirror: y}
+    material: stone
+    with: {l: 160, w: 220, h: 150}
+  - id: pediment_front
+    use: profile
+    on: {origin: [0, "=-outer_y + pdep", =ent_top], normal: [0, -1, 0], x_dir: [1, 0, 0]}
+    with: {h: =pdep, points: [["=-ped_span/2", 0], ["=ped_span/2", 0], [0, =ped_rise]]}
+  - id: pediment_back
+    use: profile
+    on: {origin: [0, "=outer_y - pdep", =ent_top], normal: [0, 1, 0], x_dir: [-1, 0, 0]}
+    with: {h: =pdep, points: [["=-ped_span/2", 0], ["=ped_span/2", 0], [0, =ped_rise]]}
+  - id: tympanum_front
+    use: profile
+    op: paint
+    on: {origin: [0, "=-outer_y", =ent_top], normal: [0, 1, 0], x_dir: [-1, 0, 0]}
+    material: pier-ashlar
+    with: {h: 60, points: [["=-ped_span*0.36", 100], ["=ped_span*0.36", 100], [0, "=ped_rise*0.64"]]}
+  - id: tympanum_back
+    use: profile
+    op: paint
+    on: {origin: [0, =outer_y, =ent_top], normal: [0, -1, 0], x_dir: [1, 0, 0]}
+    material: pier-ashlar
+    with: {h: 60, points: [["=-ped_span*0.36", 100], ["=ped_span*0.36", 100], [0, "=ped_rise*0.64"]]}
+  - id: rake_l
+    use: rod
+    on: {origin: [0, 0, =ent_top], normal: [0, 0, 1]}
+    at: [0, =yrake]
+    repeat: {mirror: y}
+    material: pier-ashlar
+    with: {a: ["=-ped_span/2", 0, 30], b: [0, 0, "=ped_rise + 30"], d: 170}
+  - id: rake_r
+    use: rod
+    on: {origin: [0, 0, =ent_top], normal: [0, 0, 1]}
+    at: [0, =yrake]
+    repeat: {mirror: y}
+    material: pier-ashlar
+    with: {a: ["=ped_span/2", 0, 30], b: [0, 0, "=ped_rise + 30"], d: 170}
+  - id: acroteria
+    use: block
+    on: {origin: [0, 0, =ent_top], normal: [0, 0, 1]}
+    at: ["=ped_span/2", =yrake]
+    repeat: {mirror: xy}
+    material: stone
+    with: {l: 260, w: 260, h: 300}
+  - id: apex
+    use: block
+    on: {origin: [0, 0, =ent_top], normal: [0, 0, 1]}
+    at: [0, =yrake, "=ped_rise - 30"]
+    repeat: {mirror: y}
+    material: stone
+    with: {l: 340, w: 300, h: 420}
+  # ------------------------------------------------ side windows (2 per side, glass + surround + iron bars)
+  - id: win_glass_r
+    use: block
+    on: core.right
+    at: ["=depth*0.23", "=wz - zc"]
+    repeat: {mirror: x}
+    material: slate
+    with: {l: =ww, w: =wh, h: 16}
+  - id: win_glass_l
+    use: block
+    on: core.left
+    at: ["=depth*0.23", "=wz - zc"]
+    repeat: {mirror: x}
+    material: slate
+    with: {l: =ww, w: =wh, h: 16}
+  - id: win_frame_r
+    use: block
+    on: core.right
+    at: ["=depth*0.23 + ww/2 + 85", "=wz - zc"]
+    repeat: {points: [[0, 0], ["=-(ww + 170)", 0]], mirror: x}
+    material: pier-ashlar
+    with: {l: 130, w: "=wh + 300", h: 160}
+  - id: win_frame_l
+    use: block
+    on: core.left
+    at: ["=depth*0.23 + ww/2 + 85", "=wz - zc"]
+    repeat: {points: [[0, 0], ["=-(ww + 170)", 0]], mirror: x}
+    material: pier-ashlar
+    with: {l: 130, w: "=wh + 300", h: 160}
+  - id: win_lintel_sill_r
+    use: block
+    on: core.right
+    at: ["=depth*0.23", "=wz - zc"]
+    repeat: {points: [[0, "=wh/2 + 85"], [0, "=-(wh/2 + 85)"]], mirror: x}
+    material: pier-ashlar
+    with: {l: "=ww + 440", w: 150, h: 200}
+  - id: win_lintel_sill_l
+    use: block
+    on: core.left
+    at: ["=depth*0.23", "=wz - zc"]
+    repeat: {points: [[0, "=wh/2 + 85"], [0, "=-(wh/2 + 85)"]], mirror: x}
+    material: pier-ashlar
+    with: {l: "=ww + 440", w: 150, h: 200}
+  - id: win_bars_r
+    use: block
+    on: core.right
+    at: ["=depth*0.23", "=wz - zc"]
+    repeat: {points: [["=-ww*0.3", 0], [0, 0], ["=ww*0.3", 0]], mirror: x}
+    material: bronze
+    with: {l: 35, w: "=wh*0.86", h: 36}
+  - id: win_bars_l
+    use: block
+    on: core.left
+    at: ["=depth*0.23", "=wz - zc"]
+    repeat: {points: [["=-ww*0.3", 0], [0, 0], ["=ww*0.3", 0]], mirror: x}
+    material: bronze
+    with: {l: 35, w: "=wh*0.86", h: 36}
+  # ------------------------------------------------ attic drum, colonnade, copper dome
+  - id: drum_base
+    use: revolve
+    on: core.top
+    material: pier-ashlar
+    with: {points: [[0, 0], [=outer_r, 0], [=outer_r, "=base_h*0.72"], ["=wall_r*1.05", =base_h], [0, =base_h]]}
+  - id: drum_wall
+    use: cylinder
+    on: core.top
+    at: [0, 0, =base_h]
+    with: {d: "=2*wall_r", h: =col_gap}
+  - id: drum_cornice
+    use: revolve
+    on: core.top
+    at: [0, 0, "=base_h + col_gap"]
+    material: stone
+    with: {points: [[0, 0], ["=outer_r*1.06", 0], ["=outer_r*1.06", "=cap_h*0.70"], ["=outer_r*1.10", =cap_h], [0, =cap_h]]}
+  - id: drum_windows
+    use: block
+    on: core.top
+    at: [0, 0, "=base_h + col_gap*0.52 - win_h/2"]
+    rotate: 90
+    repeat: {polar: {n: 12, r: "=wall_r + 5", orient: true}}
+    material: slate
+    with: {l: =win_w, w: 40, h: =win_h}
+  - id: drum_window_heads
+    use: block
+    on: core.top
+    at: [0, 0, "=base_h + col_gap*0.52 + win_h/2"]
+    rotate: 90
+    repeat: {polar: {n: 12, r: "=wall_r + 30", orient: true}}
+    material: slate
+    with: {l: "=win_w*1.35", w: 160, h: 100}
+  - id: drum_columns
+    use: cylinder
+    on: core.top
+    at: [0, 0, "=base_h*0.6"]
+    repeat: {polar: {n: 12, r: =col_ring, start: 15}}
+    material: stone
+    with: {d: "=dr*0.112", h: "=col_gap + base_h*0.4 + 30"}
+  - id: dome
+    use: revolve
+    on: core.top
+    at: [0, 0, =drum_h]
+    material: copper
+    with: {points: [[0, =rise], ["=dr*0.22", "=rise*0.82"], ["=dr*0.52", "=rise*0.42"], ["=dr*0.82", "=rise*0.12"],
+                    ["=dr*1.12", 0], ["=dr*1.12", -140], [0, -140]]}
+  - id: finial
+    use: revolve
+    on: core.top
+    at: [0, 0, "=drum_h + rise - 160"]
+    material: copper
+    with: {points: [[0, 0], ["=dr*0.060", 0], ["=dr*0.055", 160], ["=dr*0.024", 300], ["=dr*0.030", 400], [0, 560]]}
+  # ------------------------------------------------ details: frieze band + bronze toll plaques
+  - id: frieze_band
+    use: block
+    on: plinth.top
+    at: [0, "=face + 18", "=col_h + ent_h*0.72 - 17.5"]
+    repeat: {mirror: y}
+    material: pier-ashlar
+    with: {l: "=ped_span*0.99", w: 45, h: 35}
+  - id: toll_plaque
+    use: block
+    on: plinth.top
+    at: [0, "=face + 21", "=col_h + ent_h*0.60 - col_h*0.0425"]
+    repeat: {mirror: y}
+    material: bronze
+    with: {l: "=col_h*0.30", w: 50, h: "=col_h*0.085"}
+checks:
+  solids: 1
+  materials: 6
+  bbox: {size: ["=plinth_hw*2 + 240", null, "=body_top + drum_h + rise + 400"], tol: 1}
+  com: {expect: [null, 0, null], tol: 1}
+  dims:
+    - {name: drum_column_ring, value: "=hypot(drum_columns.points[0][0], drum_columns.points[0][1])", expect: =col_ring, tol: 0.01}
+    - {name: portico_offset, value: "=abs(columns_r.points[0][1])", expect: =portico_y, tol: 0.01}
+    # design-space guards (found by sweeping control combinations)
+    - {name: column_clearance, value: "=x_step - 2.55*col_r", min: 0,
+       fix: "column feet/abaci collide: fewer columns or a wider gate"}
+    - {name: pediment_under_attic, value: "=ent_top + ped_rise - body_top", max: "=0.05*height", level: warn,
+       fix: "pediment apex rises above the attic roof: proportions skewed (wide + low gate)"}
+  empty_at:
+    - [0, 0, "=plinth_top + 100"]                 # passage floor level
+    - [0, "=-hd - 300", 100]                      # road through the plinth
+    - [0, 0, "=spring + R - 60"]                  # just under the crown
+    - ["=R - 60", 0, =spring]                     # at the springing
+  solid_at:
+    - ["=R + ring + 60", 0, =spring]
+    - [0, 0, "=crown + ring + 100"]
+  material_at:
+    - [0, 0, "=body_top + drum_h + rise*0.5", copper]
+    - ["=plinth_hw - 300", 0, 600, stone]
+    - ["=plinth_hw - 200", "=plinth_hd - 200", "=plinth_top - 50", pier-ashlar]
+    - [0, 0, "=spring + R + ring/2", pier-ashlar]
+    - ["=hw - 200", 0, "=plinth_top + 20 + course_h/2", pier-ashlar]
+    - ["=hw - 200", 0, "=plinth_top + 20 + course_h*1.5", chipped-limestone]
+    - ["=hw + 8", "=depth*0.23 + ww*0.15", =wz, slate]
+    - ["=hw + 18", "=depth*0.23", =wz, bronze]
+    - [0, "=-(face + 30)", "=col_top + ent_h*0.6", bronze]
+    - ["=wall_r + 15", 0, "=body_top + base_h + col_gap*0.52", slate]
+    - ["=col_ring*cos(15)", "=col_ring*sin(15)", "=body_top + base_h + col_gap/2", stone]
+    - [0, "=-(outer_y - 30)", "=ent_top + ped_rise*0.3", pier-ashlar]

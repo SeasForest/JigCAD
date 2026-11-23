@@ -4,6 +4,7 @@
 
 Agent 写一份声明式 YAML 规格（参数 + 组件特征 + 验收检查）。`jig` 在本地的 OpenCascade
 B-Rep 内核上确定性地构建零件，**逐特征自检**，然后导出 STEP / STL / 3MF / GLB。全部离线运行，不产生任何云费用。
+支持**多色 / 多材质**：特征级 `material:` 和 `op: paint`；导出带颜色的 STEP、3MF、GLB，并为每种材质单独导出 STL。
 
 ```
 $ jig check examples/enclosure.yaml
@@ -60,6 +61,7 @@ jig bench examples                     # 基准零件集通过率
 
 - [Skill（给 Agent 读的）](skill/jigcad/SKILL.md)，参考文档在 `skill/jigcad/references/`
 - [设计说明、决策记录与路线图](docs/DESIGN.md)
+- [试验：复刻 procgen-hy4 模型（含多材质 city-gate）](trials/procgen/REPORT.md)
 
 ## 开发
 

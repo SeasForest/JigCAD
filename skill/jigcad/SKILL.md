@@ -1,6 +1,6 @@
 ---
 name: jigcad
-description: Build precise, self-checked parametric CAD parts (STEP/STL/3MF) with the `jig` CLI — brackets, plates, jigs, fixtures, enclosures, flanges, 3D-print parts. Use when the user asks to model, design, modify or export a mechanical/functional 3D part with real dimensions.
+description: Build precise, self-checked parametric CAD parts (STEP/STL/3MF), single- or multi-colour/material, with the `jig` CLI — brackets, plates, jigs, fixtures, enclosures, flanges, 3D-print parts, architectural kits. Use when the user asks to model, design, modify or export a 3D part with real dimensions.
 ---
 
 # JigCAD skill
@@ -47,8 +47,24 @@ code and never compute absolute 3D coordinates by hand.
 - **Sweep every control** the user may change: `jig check part.yaml -s L=150` at min /
   default / max (and e.g. several angles). Write checks that stay true across the sweep
   (distances to an axis, not world x/y): a mis-placed feature can pass at one value only.
+- One part = one fused solid: overlapping features merge silently. When separate pieces
+  must not collide (columns, ribs in a row), add a clearance check (`dims` with `min: 0`).
 - Escape hatch for truly custom geometry: `use: python` (see `references/spec.md`) —
   last resort, its result is still self-checked.
+
+## Colours / materials (multi-colour prints, kits)
+
+- `material: <name>` at top level = default; per feature `material: <name>` on adds.
+  Built-in names: print colours (`white black red blue …`), engineering (`petg steel
+  aluminium …`) and all procgen slots (`stone pier-ashlar chipped-limestone slate bronze
+  copper iron …`). Custom: top-level `materials: {gold: {color: "#d4af37", density: 19.3}}`.
+- **Later features win** where they overlap. To recolour existing material without
+  changing geometry use `op: paint` (stripes, logo skin, inlay look, trim bands).
+- Check every colour that matters: `material_at: [[x, y, z, name], ...]` and
+  `materials: N`. Warnings `material_hidden` / `material_island` = colour not visible /
+  unprintable specks.
+- `jig build -f step,stl,3mf,gltf` writes a coloured STEP assembly, a 3MF with one coloured
+  object per material, a coloured GLB and `part.<material>.stl` per material (slicers).
 
 ## Anchor frames (local axes of `at: [u, v, w]`)
 
@@ -83,4 +99,5 @@ E breakout [vents[0]] cut breaks through a side face near [15.95, 30.0, 16.5]
   fix: move it inward / reduce size, or set breakout:true / use notch if intended
 ```
 `[id[k]]` = k-th instance of a repeated feature. `W` lines are warnings (still PASS).
+Multi-material parts add a `materials stone 52%  copper 2% …` line.
 Add `--json` for machine-readable output.

@@ -14,6 +14,10 @@
 | `touch_only` | add touches only along a line/point (curved face) | sink it in: `at: [u, v, -s]`, height + s |
 | `non_manifold` | fusing created a line/point contact (wheel on rail) | shift/resize ~0.5 mm to overlap or leave a gap |
 | `internal` | bug inside a JigCAD component, not your geometry | try another param form; report it |
+| `material` | unknown material / bad colour | use a built-in name or declare it under `materials:` |
+| `paint_missed` | `op: paint` volume does not touch the part | move it onto the material to recolour |
+| `material_hidden` (W) | a feature's colour is fully covered or cut away | later features win: reorder or drop it |
+| `material_island` (W) | tiny colour specks | enlarge/merge, or give them the neighbour's material |
 | `disjoint` / `solids` | part split into pieces | a cut severs the part or an add floats |
 | `check` | a declared check failed (`bbox.size_x`, `dim:pitch`, `empty_at[..]`) | geometry disagrees with intent: fix the feature, not the check |
 | `multi_wall` (W) | through-all cut pierces several walls | use `depth: next` if only the first wall is meant |

@@ -3,7 +3,9 @@
 ```yaml
 part: bracket_a            # output file name
 process: fdm               # fdm|sla|cnc|laser|generic  -> default min_wall (1.2/0.8/1.0/1.0/1.0)
-material: petg             # optional, enables mass: pla petg abs asa nylon resin aluminium steel stainless brass pom
+material: petg             # default material/colour (built-in name or one from materials:)
+materials:                 # optional custom/overridden materials
+  gold: {color: "#d4af37", density: 19.3}
 params:                    # evaluated top-down, may reference earlier params
   L: 80
   margin: 8
@@ -21,7 +23,8 @@ features:                  # executed top-down; first one must create material
     flip: false            # reverse the anchor normal
     repeat: {mirror: x}    # see below
     when: "=L > 50"        # optional condition (feature skipped when false)
-    op: cut                # optional override: add|cut|intersect
+    op: cut                # optional override: add|cut|intersect|paint
+    material: red          # on adds (or op: paint): colour/material of this feature's material
     with: {size: M4, type: cbore}
 checks: {...}              # see checks.md
 ```
@@ -39,11 +42,25 @@ checks: {...}              # see checks.md
 | `{grid: {nx: 3, ny: 2, dx: 20, dy: 15}}` | grid centred on `at` |
 | `{polar: {n: 6, r: 30, start: 0, sweep: 360, orient: false}}` | circle around `at` |
 | `{mirror: x \| y \| xy}` | `at` plus its mirror images about the anchor centre |
-| `{points: [[u, v], ...]}` | explicit offsets added to `at` |
+| `{points: [[u, v], ...]}` | explicit offsets added to `at` ([u, v, spin_deg] allowed) |
+| `{linear: {n: 6, step: [du, dv, dw]}}` | n copies stepping in the anchor frame, incl. along the normal (w) |
+
+`mirror` can be combined with one generator: `{grid: {...}, mirror: y}` mirrors every
+generated position (porticoes front + back, columns left + right).
 
 ## Depth values (cuts)
 number (mm from the anchor face) · `through` (through everything along the axis) ·
 `next` (through the first wall only – use for shells/enclosures).
+
+## op: paint (multi-colour without geometry change)
+A feature with `op: paint` + `material:` keeps the geometry and recolours the part's material
+inside its volume at that moment (later adds keep their own material, later cuts still cut).
+Typical: coloured courses/stripes, a logo skin 0.6 mm deep for multi-colour printing, trim bands.
+
+## Shapes worth knowing
+`revolve` (lathe a closed [r, z] profile about the anchor normal: columns, domes, rings, pulleys),
+`rod` (bar between two anchor-local points), `arch` (round-headed opening; `breakout: true`
+for door/passage openings that reach the base), `profile` (any polygon, any winding).
 
 ## Escape hatch
 ```yaml

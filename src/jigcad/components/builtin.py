@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import math
 
-from build123d import (Align, Cone, Cylinder, Plane, Polygon, RectangleRounded,
+from build123d import (Align, Axis, Circle, Cone, Cylinder, Plane, Polygon, RectangleRounded, Solid, Vector,
+                       revolve as b_revolve,
                        Rectangle, RegularPolygon, Sketch, SlotCenterToCenter,
                        chamfer as b_chamfer, extrude, fillet as b_fillet, offset as b_offset,
                        Kind)
@@ -132,6 +133,28 @@ def l_bracket(ctx, p):
     return Out(_w(s, pl), anchors=anchors)
 
 
+@component("revolve", "base", "lathe: revolve a closed [r, z] profile about the anchor normal (columns, rings, domes)",
+           {"points": P("list", required=True, doc="[[r, z], ...] r >= 0 = distance from axis, z along normal"),
+            "angle": P(default=360.0, min=1, max=360)},
+           example={"use": "revolve", "on": "base.top", "with": {"points": [[0, 0], [20, 0], [15, 30], [0, 30]]}})
+def revolve(ctx, p):
+    pts = [tuple(map(float, q)) for q in p["points"]]
+    if len(pts) > 3 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    if len(pts) < 3:
+        raise ParamError("revolve needs >= 3 [r, z] points")
+    if min(q[0] for q in pts) < -1e-9:
+        raise ParamError("revolve: r must be >= 0 (profile may not cross the axis)")
+    area2 = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]))
+    if abs(area2) < 1e-9:
+        raise ParamError("revolve profile has zero area")
+    face = Plane.XZ * Polygon(*pts, align=None)
+    s = b_revolve(face, Axis.Z, p["angle"])
+    pl = ctx.plane
+    zmax = max(q[1] for q in pts)
+    return Out(_w(s, pl), anchors={"tip": _local_plane(pl, z=zmax)}, points=[_pt(pl)], axis=_axis(pl))
+
+
 # --------------------------------------------------------------------------- add
 
 @component("boss", "add", "cylindrical boss grown from the face, optional centre hole",
@@ -184,6 +207,20 @@ def gusset(ctx, p):
     sk = Polygon((0, 0), (p["l"], 0), (0, p["h"]), align=None)
     s = extrude(Plane.XZ * sk, p["t"] / 2, both=True)
     return Out(_w(s, ctx.plane), axis=_axis(ctx.plane))
+
+
+@component("rod", "add", "round bar between two local points a and b (bracing, rails, rakes)",
+           {"a": P("vec3", required=True, doc="[u, v, w] start, anchor-local"),
+            "b": P("vec3", required=True, doc="[u, v, w] end, anchor-local"),
+            "d": P(required=True, min=0.001)})
+def rod(ctx, p):
+    a, b = Vector(*p["a"]), Vector(*p["b"])
+    ln = (b - a).length
+    if ln < 1e-6:
+        raise ParamError("rod: a and b coincide")
+    s = Solid.make_cylinder(p["d"] / 2, ln, Plane(origin=a, z_dir=b - a))
+    pl = ctx.plane
+    return Out(_w(s, pl), points=[_pt(pl, *p["a"]), _pt(pl, *p["b"])])
 
 
 @component("pin", "add", "locating / dowel pin with tip chamfer",
@@ -288,6 +325,28 @@ def slot(ctx, p):
     pl = ctx.plane
     return Out(_w(tool, pl), points=[_pt(pl, -p["length"] / 2), _pt(pl, p["length"] / 2)],
                through=_thru(p["depth"]), axis=_axis(pl), depth=depth)
+
+
+@component("arch", "cut", "round-headed opening: jambs of height h from the anchor (v=0) + semicircle of span w",
+           {"w": P(required=True, min=0.001, doc="clear span"), "h": P(default=0.0, min=0, doc="jamb height to springing"),
+            "depth": P("depth", default="through"),
+            "breakout": P("bool", default=False, doc="allow opening the face below (doorways, passages)")},
+           anchors="crown (top of the opening)")
+def arch(ctx, p):
+    depth = _depth(ctx, p["depth"])
+    w, h = p["w"], p["h"]
+    sk = Circle(w / 2).moved(Plane.XY.offset(0).location * _loc_xy(0, h))
+    if h > 0:
+        sk = sk + Rectangle(w, h).moved(_loc_xy(0, h / 2))
+    tool = extrude(sk, depth + EPS).moved(Plane.XY.offset(-depth).location)
+    pl = ctx.plane
+    return Out(_w(tool, pl), anchors={"crown": _local_plane(pl, 0, h + w / 2)}, points=[_pt(pl, 0, h)],
+               through=_thru(p["depth"]), axis=_axis(pl), allow_breakout=p["breakout"], depth=depth)
+
+
+def _loc_xy(x, y):
+    from build123d import Location
+    return Location((x, y, 0))
 
 
 @component("nut_trap", "cut", "hexagonal nut pocket (ISO 4032 across-flats + clearance)",

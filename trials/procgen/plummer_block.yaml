@@ -1,0 +1,58 @@
+# procgen-hy4 kitlib_mech.plummer_block(bore_r=0.015) re-modelled as a machinable cast housing (mm)
+part: plummer_block
+process: cnc
+material: steel
+params:
+  br: 15                                   # journal bore radius
+  length: 110
+  r_bush: "=br + max(8, br*0.24)"
+  r_hous: "=r_bush + max(22, br*0.52)"
+  ch: "=max(r_hous + 42, br*2.3 + 36)"     # centre height above bed
+  sole_t: "=max(18, length*0.20)"
+  hw: "=r_hous*1.95 + 42"
+  blen: "=length*0.88"
+  ped_hw: "=r_hous*1.24"
+  by_bolt: "=(ped_hw + hw)/2"
+  stud_d: 19
+features:
+  - id: sole
+    use: box
+    with: {l: "=length*1.04", w: "=hw*2", h: =sole_t}
+  - id: pedestal
+    use: profile
+    on: YZ                                  # local u=+Y, v=+Z, normal +X
+    at: [0, 0, "=-blen/2"]
+    with:
+      h: =blen
+      points: [["=-ped_hw", "=sole_t"], ["=ped_hw", "=sole_t"], ["=r_hous", "=ch"], ["=-r_hous", "=ch"]]
+  - id: housing
+    use: cylinder
+    on: YZ
+    at: [0, =ch, "=-blen/2"]
+    with: {d: "=2*r_hous", h: =blen}
+  - id: bore
+    use: hole
+    on: housing.right
+    with: {d: "=2*r_bush"}
+  - id: oil_cup
+    use: boss
+    on: housing.top
+    at: [0, 0, -4]                          # sink into the curved housing
+    with: {d: "=2*max(14, br*0.38)", h: 16, hole_d: 6, hole_depth: next}
+  - id: anchor_holes
+    use: hole
+    on: sole.top
+    at: [0, =by_bolt]
+    repeat: {mirror: y}
+    with: {d: =stud_d}
+  - id: sole_chamfer
+    use: chamfer
+    with: {d: 2, edges: top, of: sole}
+checks:
+  bbox: {size: ["=length*1.04", "=hw*2", "=ch + r_hous + 12"], tol: 0.01}
+  com: {expect: [0, 0, null], tol: 0.05}
+  dims:
+    - {name: centre_height, value: "=housing.cz", expect: =ch, tol: 0.01}
+    - {name: bolt_pitch, value: "=dist(anchor_holes.points[0], anchor_holes.points[1])", expect: "=2*by_bolt", tol: 0.01}
+  empty_at: [[0, 0, =ch], [0, =by_bolt, 5], [0, 0, "=ch + r_hous + 6"]]
+  solid_at: [[0, 0, "=sole_t/2"]]

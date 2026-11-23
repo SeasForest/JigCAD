@@ -1,0 +1,54 @@
+# procgen-hy4 kitlib_mech.clevis_fork(gap=0.03, cheek_t=0.012, pin_r=0.01, arm_len=0.08), mm
+# Single machined part (pin/bushings are separate parts in procgen; JigCAD v0.1 has no assemblies).
+part: clevis_fork
+process: cnc
+material: steel
+params:
+  gap: 30
+  cheek_t: 12
+  pin_r: 10
+  arm_len: 80
+  br: "=pin_r + 1.8"                       # mech_bore clearance
+  r_bush: "=br + max(4, pin_r*0.22)"
+  r_eye: "=r_bush + max(10, pin_r*0.62)"
+  z_arm0: "=max(arm_len*0.68, r_eye*1.45)"   # yoke top measured down from the pin axis
+  yoke_h: "=max(16, arm_len - z_arm0)"
+  x_in: "=gap/2"
+  x_out: "=gap/2 + cheek_t"
+features:
+  - id: yoke
+    use: box
+    with: {l: "=2*x_out", w: "=1.55*r_eye", h: =yoke_h}
+  - id: cheeks
+    use: block
+    on: yoke.top
+    at: ["=x_in + cheek_t/2", 0]
+    repeat: {mirror: x}
+    with: {l: =cheek_t, w: "=1.7*r_eye", h: "=arm_len - yoke_h"}
+  - id: eye_l
+    use: cylinder
+    on: yoke.left
+    flip: true                               # grow inward (+X) from the outer face; flip mirrors v
+    at: [0, "=-(arm_len - yoke_h/2)"]
+    with: {d: "=2*r_eye", h: =cheek_t}
+  - id: eye_r
+    use: cylinder
+    on: yoke.right
+    flip: true
+    at: [0, "=-(arm_len - yoke_h/2)"]
+    with: {d: "=2*r_eye", h: =cheek_t}
+  - id: pin_bore
+    use: hole
+    on: eye_r.right                          # outer face of the right eye; through both eyes
+    with: {d: "=2*r_bush"}
+  - id: shank_tap
+    use: hole
+    on: yoke.bottom
+    with: {size: M12, fit: tap, depth: 20}
+checks:
+  bbox: {size: ["=2*x_out", "=2*r_eye", "=arm_len + r_eye"], tol: 0.01}   # eye (2*r_eye) is wider than the tang
+  com: {expect: [0, 0, null], tol: 0.05}
+  dims:
+    - {name: gap, value: "=cheeks.size_x - 2*cheek_t", expect: =gap, tol: 0.01}
+    - {name: pin_axis_z, value: "=pin_bore.cz", expect: =arm_len, tol: 0.01}
+  empty_at: [[0, 0, =arm_len], ["=x_in + cheek_t/2", 0, =arm_len], [0, 0, "=arm_len - 10"]]

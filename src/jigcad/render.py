@@ -94,23 +94,47 @@ def _raster(P, tris, fids, normals, W, H, light):
 
 
 def _edges(fid, depth, scale):
+    """Feature edges = boundaries between different B-Rep faces (or face vs background).
+
+    Depth jumps are deliberately ignored: on steep curved faces they produce false
+    black bands at grazing angles."""
     e = np.zeros(fid.shape, bool)
     for dy, dx in ((0, 1), (1, 0)):
         a = fid[:fid.shape[0] - dy, :fid.shape[1] - dx]
         b = fid[dy:, dx:]
-        diff = a != b
-        da = depth[:fid.shape[0] - dy, :fid.shape[1] - dx]
-        db = depth[dy:, dx:]
-        with np.errstate(invalid="ignore"):
-            dd = np.where(np.isfinite(da) & np.isfinite(db), np.abs(da - db), 0.0)
-        jump = dd > 2.0 / max(scale, 1e-9)
-        diff |= jump
-        e[:a.shape[0], :a.shape[1]] |= diff
+        e[:a.shape[0], :a.shape[1]] |= a != b
     return e
 
 
-def render(body, path, views=("iso", "top", "front", "right"), tile=460, labels=None, title=""):
-    """labels: list of (text, (x,y,z)) shown as markers."""
+def section_cut(body, axis: str):
+    """Remove the half of the body facing the matching ortho camera (x: +X half, y: -Y half,
+    z: upper half) so interiors become visible."""
+    from build123d import Box, Location
+    bb = body.bounding_box()
+    c = bb.center()
+    big = 2 * max(bb.size.X, bb.size.Y, bb.size.Z) + 10
+    off = {"x": (big / 2 + c.X, c.Y, c.Z), "y": (c.X, c.Y - big / 2, c.Z), "z": (c.X, c.Y, c.Z + big / 2)}
+    if axis not in off:
+        raise ValueError("section must be x|y|z")
+    return body - Box(big, big, big).moved(Location(off[axis]))
+
+
+def render(body, path, views=("iso", "top", "front", "right"), tile=460, labels=None, title="",
+           section=None):
+    """labels: list of (text, (x,y,z)) shown as markers. section: x|y|z half cut."""
+    if section:
+        c = body.bounding_box().center()
+        keep = {"x": lambda q: q[0] <= c.X + 1e-6, "y": lambda q: q[1] >= c.Y - 1e-6,
+                "z": lambda q: q[2] <= c.Z + 1e-6}[section]
+        labels = [(t, q) for t, q in labels or [] if keep(q)]
+        body = section_cut(body, section)
+        title = (title + f"  [section {section}]").strip()
+    legend = []
+    names = list(dict.fromkeys(t for t, _ in labels or []))
+    if len(names) > 8:  # too many to print in place: numbered markers + legend strip
+        num = {n: str(i + 1) for i, n in enumerate(names)}
+        legend = [f"{num[n]} {n}" for n in names]
+        labels = [(num[t], p) for t, p in labels]
     V, T, F = tessellate(body)
     if len(T) == 0:
         raise ValueError("nothing to render")
@@ -126,9 +150,23 @@ def render(body, path, views=("iso", "top", "front", "right"), tile=460, labels=
     scale = min((tile - 2 * margin) / max(*extent(v), 1e-9) for v in views)
     cols = 2 if len(views) > 1 else 1
     rows = math.ceil(len(views) / cols)
-    img = Image.new("RGB", (cols * tile, rows * tile + (24 if title else 0)), BG)
-    dr = ImageDraw.Draw(img)
     f_small, f_big = _font(12), _font(15)
+    leg_lines = []
+    if legend:
+        line = ""
+        for item in legend:
+            cand = (line + "   " + item) if line else item
+            if len(cand) * 7 > cols * tile - 16:
+                leg_lines.append(line)
+                line = item
+            else:
+                line = cand
+        leg_lines.append(line)
+    leg_h = 16 * len(leg_lines) + (8 if leg_lines else 0)
+    img = Image.new("RGB", (cols * tile, rows * tile + (24 if title else 0) + leg_h), BG)
+    dr = ImageDraw.Draw(img)
+    for i, ln_ in enumerate(leg_lines):
+        dr.text((8, rows * tile + (24 if title else 0) + 4 + 16 * i), ln_, fill=(200, 40, 40), font=f_small)
     y0 = 0
     if title:
         dr.text((8, 4), title, fill=EDGE, font=f_big)

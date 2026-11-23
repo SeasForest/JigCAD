@@ -91,13 +91,18 @@ def tube(ctx, p):
 
 
 @component("profile", "base", "extrude a closed 2D polygon (local x,y points) by h; optional corner radius",
-           {"points": P("list", required=True, doc="[[x,y],...] >=3 points, CCW"),
+           {"points": P("list", required=True, doc="[[x,y],...] >=3 points, any winding"),
             "h": P(required=True, min=0.001), "r": P(default=0.0, min=0, doc="2D corner fillet")},
            example={"use": "profile", "with": {"points": [[0, 0], [40, 0], [0, 30]], "h": 5}})
 def profile(ctx, p):
     pts = [tuple(map(float, q)) for q in p["points"]]
     if len(pts) < 3:
         raise ParamError("profile needs >= 3 points")
+    area2 = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]))
+    if abs(area2) < 1e-9:
+        raise ParamError("profile points are collinear / zero area")
+    if area2 < 0:  # clockwise -> make CCW so the extrusion always grows along +normal
+        pts = pts[::-1]
     sk = Sketch() + Polygon(*pts, align=None)
     if p["r"] > 0:
         sk = b_fillet(sk.vertices(), p["r"])
@@ -131,7 +136,8 @@ def l_bracket(ctx, p):
 
 @component("boss", "add", "cylindrical boss grown from the face, optional centre hole",
            {"d": P(required=True, min=0.001), "h": P(required=True, min=0.001),
-            "hole_d": P(default=0.0, min=0), "hole_depth": P("depth", default=None, doc="default = h")},
+            "hole_d": P(default=0.0, min=0),
+            "hole_depth": P("depth", default=None, doc="from tip: number | through | next (boss + wall below); default = h")},
            anchors="tip (top face of boss)")
 def boss(ctx, p):
     s = Cylinder(p["d"] / 2, p["h"], align=BOT)
@@ -140,7 +146,15 @@ def boss(ctx, p):
     if p["hole_d"] > 0:
         if p["hole_d"] >= p["d"]:
             raise ParamError("hole_d must be < d")
-        hd = p["h"] if p["hole_depth"] is None else (ctx.through if p["hole_depth"] == "through" else p["hole_depth"])
+        hdp = p["hole_depth"]
+        if hdp is None:
+            hd = p["h"]
+        elif hdp == "through":
+            hd = ctx.through
+        elif hdp == "next":  # through the boss and the first wall it stands on
+            hd = p["h"] + (ctx.next_depth() if ctx.body is not None else 0.0)
+        else:
+            hd = hdp
         tool = Cylinder(p["hole_d"] / 2, hd + EPS, align=TOP).moved(Plane.XY.offset(p["h"] + EPS).location)
         out.info["post_cut"] = _w(tool, ctx.plane)
     return out

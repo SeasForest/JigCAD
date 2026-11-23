@@ -1,0 +1,30 @@
+# procgen-hy4 examples/starter/bollard.py, re-modelled with JigCAD (metres -> mm)
+part: bollard
+process: generic
+material: steel
+params:
+  height: 900        # procgen control(0.9, 0.6, 1.4)
+  plinth: 500
+  plinth_h: 120
+  shaft_d: 220
+  cap: 300
+  cap_h: 60
+features:
+  - id: plinth_block
+    use: box
+    with: {l: =plinth, w: =plinth, h: =plinth_h}
+  - id: shaft
+    use: cylinder
+    on: plinth_block.top
+    with: {d: =shaft_d, h: =height}
+  - id: cap_plate
+    use: box
+    on: shaft.top
+    with: {l: =cap, w: =cap, h: =cap_h}
+checks:
+  bbox: {size: [=plinth, =plinth, "=plinth_h + height + cap_h"], tol: 0.01}
+  com: {expect: [0, 0, null], tol: 0.01}
+  dims:
+    - {name: shaft_top, value: "=shaft.zmax", expect: "=plinth_h + height", tol: 0.01}
+  solid_at: [[0, 0, "=plinth_h + height/2"], [140, 140, "=plinth_h + height + cap_h/2"]]
+  empty_at: [[200, 200, "=plinth_h + 10"]]

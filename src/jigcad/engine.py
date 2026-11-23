@@ -23,7 +23,7 @@ from .geom import EPS, bbox_anchors, bbox_dict, classify_points, diag, place, ra
 
 TOP_KEYS = {"part", "component", "kind", "summary", "units", "process", "material", "params",
             "features", "checks", "export", "description", "interface"}
-FEATURE_KEYS = {"id", "use", "with", "on", "at", "rotate", "flip", "repeat", "op", "when", "note"}
+FEATURE_KEYS = {"id", "use", "with", "on", "at", "rotate", "frame_rotate", "flip", "repeat", "op", "when", "note"}
 MAX_FEATURES = 200
 MAX_INSTANCES = 400
 MAX_NESTING = 4
@@ -376,16 +376,32 @@ def _check_add(res, fid, pre, post, outs):
         tag = fid if len(outs) == 1 else f"{fid}[{k}]"
         d = pre.distance_to(tool)
         if d > 1e-5:
+            tb, bb = bbox_dict(tool.bounding_box()), bbox_dict(pre.bounding_box())
             res.issues.append(Issue("error", "floating", tag,
-                                    f"added material is {d:.3f} mm away from the body (floating)",
-                                    "use on: <feature>.<face> so it sits on a real face; check at/flip"))
+                                    f"added material is {d:.3f} mm away from the body (floating): it spans "
+                                    f"{list(tb['min'])}..{list(tb['max'])}, body {list(bb['min'])}..{list(bb['max'])}",
+                                    "compare the spans to find the wrong axis/sign; note flip mirrors v; "
+                                    "use on: <feature>.<face> so it sits on a real face"))
             continue
-        added = _vol(tool) - _vol(pre & tool)
+        overlap = _vol(pre & tool)
+        added = _vol(tool) - overlap
+        if overlap < VOL_EPS and len(post.solids()) > len(pre.solids()):
+            res.issues.append(Issue("error", "touch_only", tag,
+                                    "added material only touches the body along a line/point (no shared area), "
+                                    "typical on curved faces",
+                                    "sink it in: at: [u, v, -s] and add s to its height (s ≈ 2-5 mm)"))
+            return
         if added < VOL_EPS:
             res.issues.append(Issue("error", "add_buried", tag, "added material is completely inside the body",
                                     "it grows along +normal of the anchor: check flip / anchor face"))
     if len(post.solids()) > len(pre.solids()):
         res.issues.append(Issue("error", "disjoint", fid, f"body split into {len(post.solids())} solids after add"))
+    elif all(s.is_manifold for s in pre.solids()) and not all(s.is_manifold for s in post.solids()):
+        res.issues.append(Issue("error", "non_manifold", fid,
+                                "fusing this feature created a non-manifold edge/vertex (bodies touch along a "
+                                "line or point, e.g. a wheel standing on a rail)",
+                                "shift or resize it ~0.5 mm to overlap or to leave a real gap; moving parts "
+                                "belong in separate parts"))
 
 
 # --------------------------------------------------------------------------- build
@@ -461,6 +477,11 @@ def build_spec(spec: dict, overrides: dict | None = None, base_dir: Path | None 
             res.issues.append(Issue("error", "feature", fid, str(e)))
             res.failed_at = fid
             break
+        except (TypeError, AttributeError, KeyError, IndexError, NameError) as e:  # bug, not geometry
+            res.issues.append(Issue("error", "internal", fid, f"{type(e).__name__}: {str(e)[:200]}",
+                                    "JigCAD component bug (not your geometry): report it; try another param form"))
+            res.failed_at = fid
+            break
         except Exception as e:  # noqa: BLE001  kernel failures
             res.issues.append(Issue("error", "kernel", fid, f"{type(e).__name__}: {str(e)[:200]}",
                                     "geometry kernel rejected this op; check sizes / tangencies / zero-thickness"))
@@ -505,6 +526,9 @@ def _apply_feature(res, f, fid, body, base_dir, process, nested, min_wall):
         raise SpecError(f"first feature must create material (base component), got {comp.name} [{comp.kind}]")
     params = validate_params(comp, _resolve(f.get("with") or {}, ns, f"{fid}.with"))
     base_plane = _plane_from(_resolve(f.get("on"), ns, f"{fid}.on"), res, body, comp.kind)
+    frot = float(_resolve(f.get("frame_rotate", 0), ns, f"{fid}.frame_rotate") or 0)
+    if frot:  # rotate the whole local frame: at offsets, repeat patterns and the part itself
+        base_plane = place(base_plane, None, frot)
     at = _resolve(f.get("at"), ns, f"{fid}.at")
     rot = float(_resolve(f.get("rotate", 0), ns, f"{fid}.rotate") or 0)
     rep = _resolve(f.get("repeat"), ns, f"{fid}.repeat")
@@ -537,6 +561,9 @@ def _apply_feature(res, f, fid, body, base_dir, process, nested, min_wall):
             pl = place(base_plane, a, rot + drot, bool(f.get("flip")))
         ctx = Ctx(pl, body, res, base_dir, process, nested)
         out = comp.build(ctx, params)
+        if not out.points:  # every instance is at least locatable by its anchor origin
+            o = pl.origin
+            out.points = [(round(o.X, 4), round(o.Y, 4), round(o.Z, 4))]
         outs.append((out, out.shape))
     tool = _union([o.shape for o, _ in outs])
     post_cuts = [o.info["post_cut"] for o, _ in outs if "post_cut" in o.info]
@@ -592,6 +619,9 @@ def _global_checks(res: BuildResult, body, cs: dict, spec: dict, run_checks: boo
         props["com"] = [round(com.X, 3), round(com.Y, 3), round(com.Z, 3)]
     except Exception:  # noqa: BLE001
         pass
+    import hashlib
+    verts = sorted((round(v.X, 3), round(v.Y, 3), round(v.Z, 3)) for v in body.vertices())
+    props["geom_hash"] = hashlib.sha1(repr(verts).encode()).hexdigest()[:10]  # position-sensitive
     mat = spec.get("material")
     if mat:
         dens = DENSITY.get(str(mat).lower())

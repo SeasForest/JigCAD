@@ -86,24 +86,24 @@ def job_build(spec, overrides, export_formats, do_render, check_only, out_dir=No
     return {"text": format_text(rep), "json": rep, "code": 0 if res.ok else 1}
 
 
-def _render(res, od, labels=True, views=("iso", "top", "front", "right"), path=None):
+def _render(res, od, labels=True, views=("iso", "top", "front", "right"), path=None, section=None):
     from .render import render
     od.mkdir(parents=True, exist_ok=True)
     lab = [(fid, p) for fid, f in res.features.items() for p in f.points[:12]] if labels else None
     path = path or od / f"{res.name}.png"
-    render(res.body, path, views=views, labels=lab,
+    render(res.body, path, views=views, labels=lab, section=section,
            title=f"{res.name}  " + ("PASS" if res.ok else f"FAIL @ {res.failed_at or 'checks'}"))
     return str(path)
 
 
-def job_render(spec, overrides, views, out, labels):
+def job_render(spec, overrides, views, out, labels, section=None):
     from .engine import build_spec, load_spec
     sp = Path(spec)
     res = build_spec(load_spec(sp), overrides=overrides, base_dir=sp.parent, run_checks=False)
     if res.body is None:
         return {"text": f"FAIL nothing to render: {res.first_error()}", "code": 1}
     od = sp.parent / "out" / res.name
-    p = _render(res, od, labels, tuple(views), Path(out) if out else None)
+    p = _render(res, od, labels, tuple(views), Path(out) if out else None, section)
     return {"text": f"render: {p}" + (f"\nnote: build stopped at '{res.failed_at}'" if res.failed_at else ""),
             "json": {"render": p}, "code": 0}
 
@@ -246,6 +246,7 @@ def main(argv=None):
     r.add_argument("--views", default="iso,top,front,right")
     r.add_argument("-o", "--out")
     r.add_argument("--no-labels", action="store_true")
+    r.add_argument("--section", choices=["x", "y", "z"], help="cut away the half facing that view to see inside")
 
     c = sub.add_parser("comp", help="component library")
     c.add_argument("action", choices=["list", "show", "test"])
@@ -299,7 +300,7 @@ def main(argv=None):
         return _emit(_run(job_inspect, a.timeout, spec=a.spec, overrides=ov, anchors=not a.no_anchors), a.json)
     if a.cmd == "render":
         return _emit(_run(job_render, a.timeout, spec=a.spec, overrides=ov, views=a.views.split(","),
-                          out=a.out, labels=not a.no_labels), a.json)
+                          out=a.out, labels=not a.no_labels, section=a.section), a.json)
     if a.cmd == "comp":
         if a.action != "list" and not a.name:
             print("component name required")

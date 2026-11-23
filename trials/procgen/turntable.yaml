@@ -1,0 +1,143 @@
+# procgen-hy4 examples/hy4/turntable.py (wall=1 variant), core structure only, mm.
+# z' = z + pit_d  (pit floor underside at z'=0). Bridge frame = rotated by `angle` about Z.
+part: turntable
+process: generic
+material: steel
+params:
+  d: 15000
+  angle: 0
+  r: "=d/2"
+  wall_t: "=d*0.028"
+  inner_r: "=r - wall_t"
+  pit_d: "=max(1350, d*0.115)"
+  floor_t: 140
+  cop_t: 140
+  ring_r: "=inner_r - 420"
+  ring_top: "=floor_t + 220"
+  L: "=inner_r - 100"             # bridge half length
+  gy: 1340                        # girder centre lines
+  gauge: 1435
+  wt: 75
+  top: "=pit_d - 290"             # girder top
+  bot_mid: "=top - d*0.06"
+  bot_end: "=top - d*0.03"
+  pier_r: "=min(1050, d*0.072)"
+  pier_top: "=bot_mid - 130"
+  wheel_r: 312
+  run_gap: 0.5                    # running clearance tyre/rail (procgen uses 0.5 mm butt gaps)
+  wheel_z: "=ring_top + wheel_r + run_gap"
+  wy: "=gy + 250"
+  wx: "=sqrt(ring_r**2 - wy**2)"  # wheel centres on the rail circle
+  cop_w: "=wall_t + 260"
+  cop_c: "=r - wall_t*0.42"
+  # bridge frame axes
+  ux: "=cos(angle)"
+  uy: "=sin(angle)"
+features:
+  # ---------------- static pit
+  - id: pit_floor
+    use: cylinder
+    with: {d: "=2*r", h: =floor_t}
+  - id: pit_wall
+    use: tube
+    on: pit_floor.top
+    with: {od: "=2*r", id: "=2*inner_r", h: "=pit_d - floor_t - cop_t"}
+  - id: coping
+    use: tube
+    on: pit_wall.top
+    with: {od: "=2*(cop_c + cop_w/2)", id: "=2*(cop_c - cop_w/2)", h: =cop_t}
+  - id: rail_bed
+    use: tube
+    on: pit_floor.top
+    with: {od: "=2*(ring_r + 140)", id: "=2*(ring_r - 140)", h: "=ring_top - 85 - floor_t"}
+  - id: ring_rail
+    use: tube
+    on: rail_bed.top
+    with: {od: "=2*(ring_r + 70)", id: "=2*(ring_r - 70)", h: 85}
+  - id: pier
+    use: cylinder
+    on: pit_floor.top
+    with: {d: "=2*pier_r", h: "=pier_top - floor_t"}
+  - id: kingpin_housing
+    use: cylinder
+    on: pier.top
+    with: {d: 960, h: 340}
+  # ---------------- rotating bridge
+  - id: web_near
+    use: profile
+    on: {origin: [0, 0, 0], normal: ["=uy", "=-ux", 0], x_dir: ["=ux", "=uy", 0]}   # bridge XZ plane, v=+Z
+    at: [0, 0, "=-(gy + wt/2)"]
+    with: {h: =wt, points: [["=-L", =bot_end], [0, =bot_mid], [=L, =bot_end], [=L, =top], ["=-L", =top]]}
+  - id: web_far
+    use: profile
+    on: {origin: [0, 0, 0], normal: ["=uy", "=-ux", 0], x_dir: ["=ux", "=uy", 0]}
+    at: [0, 0, "=gy - wt/2"]
+    with: {h: =wt, points: [["=-L", =bot_end], [0, =bot_mid], [=L, =bot_end], [=L, =top], ["=-L", =top]]}
+  - id: bottom_chords
+    use: profile
+    on: {origin: [0, 0, 0], normal: ["=uy", "=-ux", 0], x_dir: ["=ux", "=uy", 0]}
+    at: [0, 0, "=-(gy + 120)"]
+    with: {h: 240, points: [["=-L", =bot_end], [0, =bot_mid], [=L, =bot_end], [=L, "=bot_end-70"], [0, "=bot_mid-70"], ["=-L", "=bot_end-70"]]}
+  - id: bottom_chords_far
+    use: profile
+    on: {origin: [0, 0, 0], normal: ["=uy", "=-ux", 0], x_dir: ["=ux", "=uy", 0]}
+    at: [0, 0, "=gy - 120"]
+    with: {h: 240, points: [["=-L", =bot_end], [0, =bot_mid], [=L, =bot_end], [=L, "=bot_end-70"], [0, "=bot_mid-70"], ["=-L", "=bot_end-70"]]}
+  - id: top_flanges
+    use: block
+    on: {origin: [0, 0, =top], normal: [0, 0, 1], x_dir: ["=ux", "=uy", 0]}
+    at: [0, =gy]
+    repeat: {mirror: y}
+    with: {l: "=2*L", w: 300, h: 65}
+  - id: cross_girders
+    use: block
+    on: {origin: [0, 0, =top], normal: [0, 0, -1], x_dir: ["=ux", "=uy", 0]}
+    repeat: {grid: {nx: 13, dx: "=2*L/12"}}
+    with: {l: 150, w: "=2*gy - 100", h: 280}
+  - id: deck
+    use: block
+    on: {origin: [0, 0, =top], normal: [0, 0, 1], x_dir: ["=ux", "=uy", 0]}
+    with: {l: "=2*L", w: "=2*gy - 300", h: 65}
+  - id: track
+    use: block
+    on: deck.top
+    at: [0, "=gauge/2"]
+    frame_rotate: =angle             # offsets follow the bridge, not world axes
+    repeat: {mirror: y}
+    with: {l: "=2*L", w: 70, h: 150}
+  - id: kingpin
+    use: cylinder
+    on: kingpin_housing.top
+    with: {d: 210, h: "=top + 50 - (pier_top + 340)"}
+  - id: hangers
+    use: block
+    on: {origin: [0, 0, "=wheel_z - 110"], normal: [0, 0, 1], x_dir: ["=ux", "=uy", 0]}
+    at: [=wx, "=gy + 100"]
+    repeat: {mirror: xy}
+    with: {l: 220, w: 100, h: "=bot_end + 110 - (wheel_z - 110)"}
+  - id: axleboxes
+    use: block
+    on: {origin: [0, 0, "=wheel_z - 110"], normal: [0, 0, 1], x_dir: ["=ux", "=uy", 0]}
+    at: [=wx, "=gy + 100"]
+    repeat: {mirror: xy}
+    with: {l: 300, w: 220, h: 220}
+  - id: wheels
+    use: cylinder
+    on: {origin: [0, 0, =wheel_z], normal: ["=-uy", "=ux", 0], x_dir: ["=ux", "=uy", 0]}
+    at: [=wx, 0, "=wy - 71"]
+    repeat: {mirror: x}
+    with: {d: "=2*wheel_r", h: 142}
+  - id: wheels_far
+    use: cylinder
+    on: {origin: [0, 0, =wheel_z], normal: ["=uy", "=-ux", 0], x_dir: ["=ux", "=uy", 0]}
+    at: [=wx, 0, "=wy - 71"]
+    repeat: {mirror: x}
+    with: {d: "=2*wheel_r", h: 142}
+checks:
+  bbox: {size: ["=2*(cop_c + cop_w/2)", "=2*(cop_c + cop_w/2)", null], tol: 0.5}
+  dims:
+    # wheel inner-face centre stays on its circle at every angle (rotation invariant)
+    - {name: wheel_track_radius, value: "=hypot(wheels.points[0][0], wheels.points[0][1])", expect: "=hypot(wx, wy - 71)", tol: 0.01}
+    - {name: track_offset, value: "=hypot(track.points[0][0], track.points[0][1])", expect: "=gauge/2", tol: 0.01}
+    - {name: tyre_rail_gap, value: "=wheels.zmin - ring_rail.zmax", expect: =run_gap, tol: 0.01}
+    - {name: kingpin_reaches_deck, value: "=kingpin.zmax", expect: "=top + 50", tol: 0.01}

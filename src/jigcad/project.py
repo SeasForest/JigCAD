@@ -44,7 +44,7 @@ def export(body, name: str, out_dir: Path, formats=("step", "stl")) -> list[str]
 # --------------------------------------------------------------------------- report
 
 def fingerprint(props: dict) -> str:
-    key = json.dumps({k: props.get(k) for k in ("volume", "area", "bbox", "faces", "edges", "solids")},
+    key = json.dumps({k: props.get(k) for k in ("volume", "area", "bbox", "faces", "edges", "solids", "geom_hash")},
                      sort_keys=True, default=str)
     return hashlib.sha1(key.encode()).hexdigest()[:10]
 

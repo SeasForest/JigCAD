@@ -24,6 +24,7 @@ code and never compute absolute 3D coordinates by hand.
    feature's points/bbox/anchors when unsure where something landed.
 6. **Look once**: `jig render part.yaml` → open the PNG (iso/top/front/right, feature
    labels, mm ruler). Compare against the request: orientation, which face, symmetry.
+   Hollow / pit-like parts: add `--section y` (or x/z) to see inside.
    Text-only model? use `jig inspect` and probe checks instead.
 7. **`jig build part.yaml -f step,stl,3mf`** → exports + saves a verified snapshot.
 8. Something reusable emerged? `jig promote part.yaml --name <comp> --expose a,b`.
@@ -43,7 +44,9 @@ code and never compute absolute 3D coordinates by hand.
   impossible, tell the user.
 - Edits are small diffs to the spec. If you broke a previously passing spec:
   `jig log part.yaml` / `jig restore part.yaml <n>`.
-- Parameter studies: `jig check part.yaml -s L=150 -s T=8` (no file edits).
+- **Sweep every control** the user may change: `jig check part.yaml -s L=150` at min /
+  default / max (and e.g. several angles). Write checks that stay true across the sweep
+  (distances to an axis, not world x/y): a mis-placed feature can pass at one value only.
 - Escape hatch for truly custom geometry: `use: python` (see `references/spec.md`) —
   last resort, its result is still self-checked.
 
@@ -58,6 +61,13 @@ code and never compute absolute 3D coordinates by hand.
 | right   | +X | +Y | +Z |
 | left    | −X | −Y | +Z |
 | center  | +Z | +X | +Y |
+
+`rotate: deg` spins each instance in place (its position from `at` is unchanged);
+`frame_rotate: deg` rotates the whole local frame first, so `at`, `repeat` and the part
+all turn together (use it for anything that follows a rotating assembly).
+
+`flip: true` reverses the normal and **mirrors v** (u is kept): on a flipped side face
+"up" becomes `-v`. Check with `jig inspect` (points) when unsure.
 
 Every feature has these (from its own bounding box, for cuts: the removed material),
 plus component extras (`tip` of boss/pin/standoff/block, `floor` of pocket, `leg_top`,

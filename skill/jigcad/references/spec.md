@@ -16,7 +16,8 @@ features:                  # executed top-down; first one must create material
     use: hole
     on: base.top           # anchor (default: body.top; base parts default to world XY)
     at: ["=pitch/2", 0]    # local offset [u, v] or [u, v, w] from the anchor centre
-    rotate: 0              # degrees about the anchor normal
+    rotate: 0              # spin each instance in place about the anchor normal (degrees)
+    frame_rotate: 0        # rotate the local frame first: at + repeat + part turn together
     flip: false            # reverse the anchor normal
     repeat: {mirror: x}    # see below
     when: "=L > 50"        # optional condition (feature skipped when false)

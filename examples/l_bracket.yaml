@@ -1,0 +1,40 @@
+part: l_bracket
+process: fdm
+material: petg
+params:
+  L: 60        # horizontal leg
+  W: 40        # width
+  H: 50        # wall height
+  T: 5         # thickness
+  G: 22        # gusset size
+features:
+  - id: bracket
+    use: l_bracket
+    with: {l: =L, w: =W, h: =H, t: =T}
+  - id: gussets
+    use: gusset
+    on: bracket.leg_top
+    at: ["=-(L-T)/2", "=W/2 - 2"]   # leg_top centre -> inner corner of the wall, near the edge
+    repeat: {mirror: y}
+    with: {l: =G, h: =G, t: 4}
+    when: "=G > 0"
+  - id: floor_slots
+    use: slot
+    on: bracket.leg_top
+    at: [8, 0]
+    repeat: {points: [[0, -11], [0, 11]]}
+    with: {length: 10, width: 5.5}
+  - id: wall_holes
+    use: hole
+    on: bracket.wall_face
+    at: [0, 8]
+    repeat: {grid: {nx: 2, dx: 22}}
+    with: {size: M5, type: csk}
+  - id: round_corners
+    use: fillet
+    with: {r: 3, edges: outer_vertical, of: bracket}
+checks:
+  bbox: {size: [=L, =W, =H], tol: 0.01}
+  solids: 1
+  dims:
+    - {name: slot_pitch, value: "=dist(floor_slots.points[0], floor_slots.points[2])", expect: 22, tol: 0.01}

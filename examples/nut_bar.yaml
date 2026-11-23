@@ -1,0 +1,23 @@
+part: nut_bar
+process: fdm
+material: pla
+params:
+  L: 100
+  n: 4
+  pitch: 20
+features:
+  - id: bar
+    use: box
+    with: {l: =L, w: 14, h: 8}
+  - id: traps
+    use: nut_trap
+    on: bar.bottom
+    repeat: {grid: {nx: =n, dx: =pitch}}
+    with: {size: M4}
+  - id: ends
+    use: fillet
+    with: {r: 2, edges: vertical, of: bar}
+checks:
+  bbox: {size: [=L, 14, 8], tol: 0.01}
+  dims:
+    - {name: span, value: "=dist(traps.points[0], traps.points[3])", expect: "=pitch*(n-1)", tol: 0.01}

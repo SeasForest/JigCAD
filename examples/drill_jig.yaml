@@ -1,0 +1,34 @@
+part: drill_jig
+process: fdm
+material: petg
+params:
+  L: 80
+  W: 30
+  T: 12
+  pitch: 32       # hinge cup pitch to reproduce
+  drill: 5
+  pin_d: 6
+features:
+  - id: base
+    use: plate
+    with: {l: =L, w: =W, t: =T, r: 4}
+  - id: guides
+    use: hole
+    on: base.top
+    repeat: {grid: {nx: 2, dx: =pitch}}
+    with: {d: "=drill + 0.2", type: cbore, cbore_d: 10, cbore_depth: 4}
+  - id: locators
+    use: pin
+    on: base.bottom
+    at: ["=L/2 - 8", 0]
+    repeat: {mirror: x}
+    with: {d: =pin_d, h: 6}
+  - id: edge_chamfer
+    use: chamfer
+    with: {d: 1, edges: top, of: base}
+checks:
+  bbox: {size: [=L, =W, "=T + 6"], tol: 0.01}
+  dims:
+    - {name: guide_pitch, value: "=dist(guides.points[0], guides.points[1])", expect: =pitch, tol: 0.005}
+    - {name: guide_d, value: "=drill + 0.2", expect: 5.2, tol: 0.001}
+  empty_at: [["=pitch/2", 0, 6]]

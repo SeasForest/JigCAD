@@ -1,0 +1,33 @@
+part: mount_plate
+process: fdm
+material: petg
+params:
+  L: 120
+  W: 60
+  T: 8
+  margin: 10
+features:
+  - id: base
+    use: plate
+    with: {l: =L, w: =W, t: =T, r: 5}
+  - id: mount_holes
+    use: hole
+    on: base.top
+    at: ["=L/2 - margin", "=W/2 - margin"]
+    repeat: {mirror: xy}
+    with: {size: M5, type: cbore}
+  - id: center_pocket
+    use: pocket
+    on: base.top
+    with: {l: 40, w: 20, depth: 3, r: 3}
+  - id: locator
+    use: pin
+    on: center_pocket.floor
+    at: [-12, 0]
+    with: {d: 6, h: 8}
+checks:
+  bbox: {size: [=L, =W, "=T + 8 - 3"], tol: 0.01}
+  dims:
+    - {name: hole_pitch_x, value: "=dist(mount_holes.points[0], mount_holes.points[1])", expect: "=L - 2*margin", tol: 0.01}
+  empty_at: [["=L/2 - margin", "=W/2 - margin", 4]]   # inside a mounting hole
+  solid_at: [[0, 0, 1]]

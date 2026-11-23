@@ -1,0 +1,44 @@
+part: enclosure
+process: fdm
+material: petg
+params:
+  L: 90
+  W: 60
+  H: 30
+  wall: 2.0
+  pcb_l: 70     # PCB mounting hole pitch
+  pcb_w: 45
+  so_h: 5       # standoff height above floor
+features:
+  - id: shell_block
+    use: box
+    with: {l: =L, w: =W, h: =H, r: 5}
+  - id: hollow
+    use: shell
+    with: {t: =wall, open: top}
+  - id: standoffs
+    use: standoff
+    on: shell_block.bottom
+    flip: true
+    at: ["=pcb_l/2", "=pcb_w/2", "=wall"]       # flipped bottom: normal +Z, w = height above floor
+    repeat: {mirror: xy}
+    with: {size: M3, h: =so_h, fit: insert}
+  - id: usb_cutout
+    use: notch
+    on: shell_block.front
+    at: [0, "=-H/2 + wall + so_h + 4"]
+    with: {l: 12, w: 6, depth: "=wall"}
+  - id: vents
+    use: slot
+    on: shell_block.back
+    at: [0, 3]
+    repeat: {grid: {nx: 5, dx: 8}}
+    rotate: 90
+    with: {length: 12, width: 3, depth: next}
+checks:
+  bbox: {size: [=L, =W, =H], tol: 0.01}
+  min_wall: 1.0
+  dims:
+    - {name: pcb_pitch_x, value: "=dist(standoffs.points[0], standoffs.points[1])", expect: =pcb_l, tol: 0.01}
+    - {name: pcb_pitch_y, value: "=dist(standoffs.points[0], standoffs.points[2])", expect: =pcb_w, tol: 0.01}
+  empty_at: [[0, 0, 15]]
